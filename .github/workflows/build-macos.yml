@@ -5,7 +5,16 @@ on:
 
 jobs:
   build-macos:
-    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: arm64
+            runs_on: macos-15
+          - label: intel
+            runs_on: macos-15-intel
+
+    runs-on: ${{ matrix.runs_on }}
 
     steps:
       - name: Checkout
@@ -16,7 +25,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
+      - name: Install deps
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
@@ -30,10 +39,10 @@ jobs:
 
       - name: Zip .app
         run: |
-          ditto -c -k --sequesterRsrc --keepParent "dist/TrushHORROR.app" "TrushHORROR-mac.zip"
+          ditto -c -k --sequesterRsrc --keepParent "dist/TrushHORROR.app" "TrushHORROR-${{ matrix.label }}.zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TrushHORROR-mac
-          path: TrushHORROR-mac.zip
+          name: TrushHORROR-mac-${{ matrix.label }}
+          path: TrushHORROR-${{ matrix.label }}.zip
