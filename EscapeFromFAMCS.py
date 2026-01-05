@@ -322,6 +322,63 @@ class AudioSystem:
         except Exception:
             return
 
+        # ui
+        if self.ui_hover_sound is not None:
+            self.ui_hover_sound.set_volume(self.sfx_volume)
+        if self.ui_click_sound is not None:
+            self.ui_click_sound.set_volume(self.sfx_volume)
+        if self.pickup_sound is not None:
+            self.pickup_sound.set_volume(self.sfx_volume)
+        if self.victory_sound is not None:
+            self.victory_sound.set_volume(self.sfx_volume)
+        if self.end_sound is not None:
+            self.end_sound.set_volume(self.sfx_volume)
+
+    def play_ui_hover(self) -> None:
+        self._play_sfx(self.ui_hover_sound)
+
+    def play_ui_click(self) -> None:
+        self._play_sfx(self.ui_click_sound)
+
+    def play_pickup(self) -> None:
+        self._play_sfx(self.pickup_sound)
+
+    def play_victory(self) -> None:
+        self._play_sfx(self.victory_sound)
+
+    def play_end(self) -> None:
+        self._play_sfx(self.end_sound)
+
+    def _play_sfx(self, snd: Optional[pygame.mixer.Sound]) -> None:
+        if not self.enabled or snd is None:
+            return
+        try:
+            snd.set_volume(self.sfx_volume)
+            snd.play()
+        except Exception:
+            return
+
+        # ui
+        if self.ui_hover_sound is not None:
+            self.ui_hover_sound.set_volume(self.sfx_volume)
+        if self.ui_click_sound is not None:
+            self.ui_click_sound.set_volume(self.sfx_volume)
+
+    def play_ui_hover(self) -> None:
+        self._play_sfx(self.ui_hover_sound)
+
+    def play_ui_click(self) -> None:
+        self._play_sfx(self.ui_click_sound)
+
+    def _play_sfx(self, snd: Optional[pygame.mixer.Sound]) -> None:
+        if not self.enabled or snd is None:
+            return
+        try:
+            snd.set_volume(self.sfx_volume)
+            snd.play()
+        except Exception:
+            return
+
     # ---------- Menu music ----------
     def play_menu_music(self) -> None:
         if not self.enabled:
@@ -612,6 +669,11 @@ class Renderer:
         if door_pos is not None:
             self._draw_billboard(zbuffer, player, door_pos, self.door_img, dim=not door_open, scale=1.6)
 
+        if zachetka_pos is not None and not zachetka_collected:
+            self._draw_billboard(zbuffer, player, zachetka_pos, self.zachet_img)
+        if door_pos is not None:
+            self._draw_billboard(zbuffer, player, door_pos, self.door_img, dim=not door_open)
+
         # upscale to screen
         w, h = self.screen.get_size()
         frame = pygame.transform.scale(self.render, (w, h))
@@ -767,6 +829,14 @@ class Renderer:
             self.screen.blit(hh, (w // 2 - hh.get_width() // 2, int(h * 0.88)))
 
         return rects
+
+    def draw_fullscreen_image(self, img: pygame.Surface, caption: str = "") -> None:
+        w, h = self.screen.get_size()
+        scaled = pygame.transform.scale(img, (w, h))
+        self.screen.blit(scaled, (0, 0))
+        if caption:
+            txt = self.big_font.render(caption, True, (240, 240, 240))
+            self.screen.blit(txt, (w // 2 - txt.get_width() // 2, int(h * 0.82)))
 
     def draw_fullscreen_image(self, img: pygame.Surface, caption: str = "") -> None:
         w, h = self.screen.get_size()
@@ -940,6 +1010,60 @@ class Renderer:
         screen_x = int((C.RENDER_W / 2) * (1 + transformX / transformY))
 
         sprite_h = int(abs(C.RENDER_H / transformY) * scale)
+        sprite_h = int(clamp(sprite_h, 6, C.RENDER_H * 2))
+        sprite_w = sprite_h
+
+        start_y = -sprite_h // 2 + C.RENDER_H // 2
+        end_y = start_y + sprite_h
+        start_x = -sprite_w // 2 + screen_x
+        end_x = start_x + sprite_w
+
+        clip_sy = max(0, start_y)
+        clip_ey = min(C.RENDER_H, end_y)
+        if clip_ey <= clip_sy:
+            return
+        offset_y = clip_sy - start_y
+        vis_h = clip_ey - clip_sy
+
+        tex_scaled = pygame.transform.smoothscale(tex, (sprite_w, sprite_h))
+        fog_factor = math.exp(-C.FOG_STRENGTH * transformY * 22.0)
+        mul = int(255 * fog_factor)
+        mul = int(clamp(mul, 80 if dim else 120, 255))
+        tex_scaled = tex_scaled.copy()
+        tex_scaled.fill((mul, mul, mul), special_flags=pygame.BLEND_MULT)
+
+        clip_sx = max(0, start_x)
+        clip_ex = min(C.RENDER_W, end_x)
+
+        for stripe in range(clip_sx, clip_ex):
+            if transformY >= zbuffer[stripe]:
+                continue
+            tx = stripe - start_x
+            if 0 <= tx < sprite_w:
+                col = tex_scaled.subsurface((tx, offset_y, 1, vis_h))
+                self.render.blit(col, (stripe, clip_sy))
+
+    def _draw_billboard(
+        self,
+        zbuffer: List[float],
+        p: Player,
+        spr_pos: Tuple[float, float],
+        tex: pygame.Surface,
+        dim: bool = False,
+    ) -> None:
+        sprX = spr_pos[0] - p.x
+        sprY = spr_pos[1] - p.y
+
+        inv_det = 1.0 / (p.planex * p.diry - p.dirx * p.planey + 1e-9)
+        transformX = inv_det * (p.diry * sprX - p.dirx * sprY)
+        transformY = inv_det * (-p.planey * sprX + p.planex * sprY)
+
+        if transformY <= 0.06:
+            return
+
+        screen_x = int((C.RENDER_W / 2) * (1 + transformX / transformY))
+
+        sprite_h = int(abs(C.RENDER_H / transformY))
         sprite_h = int(clamp(sprite_h, 6, C.RENDER_H * 2))
         sprite_w = sprite_h
 
@@ -1696,6 +1820,9 @@ class App:
     def _savegame_path(self) -> str:
         return os.path.join(self._config_dir(), "savegame.json")
 
+    def _savegame_path(self) -> str:
+        return os.path.join(self._config_dir(), "savegame.json")
+
     def load_config(self) -> None:
         path = self._config_path()
         if not os.path.exists(path):
@@ -1767,6 +1894,18 @@ class App:
         img = pygame.image.load(path).convert()
         img = pygame.transform.smoothscale(img, (C.TEXTURE_SIZE, C.TEXTURE_SIZE))
         return img
+
+    def _load_image(self, fname: str) -> pygame.Surface:
+        path = resource_path(fname)
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Не найден '{fname}'. Ожидается по пути:\n{path}")
+        return pygame.image.load(path).convert()
+
+    def _load_image_alpha(self, fname: str) -> pygame.Surface:
+        path = resource_path(fname)
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Не найден '{fname}'. Ожидается по пути:\n{path}")
+        return pygame.image.load(path).convert_alpha()
 
     def _load_image(self, fname: str) -> pygame.Surface:
         path = resource_path(fname)
