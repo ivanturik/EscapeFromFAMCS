@@ -322,6 +322,27 @@ class AudioSystem:
         except Exception:
             return
 
+        # ui
+        if self.ui_hover_sound is not None:
+            self.ui_hover_sound.set_volume(self.sfx_volume)
+        if self.ui_click_sound is not None:
+            self.ui_click_sound.set_volume(self.sfx_volume)
+
+    def play_ui_hover(self) -> None:
+        self._play_sfx(self.ui_hover_sound)
+
+    def play_ui_click(self) -> None:
+        self._play_sfx(self.ui_click_sound)
+
+    def _play_sfx(self, snd: Optional[pygame.mixer.Sound]) -> None:
+        if not self.enabled or snd is None:
+            return
+        try:
+            snd.set_volume(self.sfx_volume)
+            snd.play()
+        except Exception:
+            return
+
     # ---------- Menu music ----------
     def play_menu_music(self) -> None:
         if not self.enabled:
