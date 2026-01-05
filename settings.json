@@ -4,7 +4,7 @@
     960,
     540
   ],
-  "invert_mouse_x": true,
-  "music_volume": 0.1,
+  "invert_mouse_x": false,
+  "music_volume": 0.2,
   "sfx_volume": 1.0
 }

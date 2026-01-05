@@ -553,7 +553,7 @@ class Renderer:
                 "FAMCS",
                 self.logo_font,
                 (255, 255, 255),
-                [((0, 120, 255), 4), ((255, 140, 0), 2)],
+                [((0, 120, 255), 6), ((255, 140, 0), 4)],
             )
             self.screen.blit(famcs, (w // 2 - famcs.get_width() // 2, title_y))
         else:
