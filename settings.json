@@ -1,0 +1,10 @@
+{
+  "fullscreen": true,
+  "window_size": [
+    960,
+    540
+  ],
+  "invert_mouse_x": true,
+  "music_volume": 0.1,
+  "sfx_volume": 1.0
+}
