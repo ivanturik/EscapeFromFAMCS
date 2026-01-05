@@ -129,7 +129,7 @@ class MapSpec:
 BASE_MAP_VARIANTS: Tuple[MapSpec, ...] = (
     MapSpec(
         grid=[
-            "111111111111111",
+            "111111011111111",  # <- дырка сверху (x=6)
             "100000000100001",
             "101111110101101",
             "101000010101001",
@@ -139,8 +139,9 @@ BASE_MAP_VARIANTS: Tuple[MapSpec, ...] = (
             "101000000001001",
             "101111011101101",
             "100000010000001",
-            "111111111111111",
+            "111111011111111",  # <- дырка снизу (x=6)
         ],
+        wrap_portals=(("N", 6.0, 7.0), ("S", 6.0, 7.0)),  # <- сверху<->снизу
     ),
     MapSpec(
         grid=[
@@ -325,9 +326,26 @@ class World:
         self.wrap_portals = list(map_spec.wrap_portals)
 
     def cell_at(self, mx: int, my: int) -> str:
-        if mx < 0 or mx >= self.w or my < 0 or my >= self.h:
-            return "1"
-        return self.MAP[my][mx]
+        # внутри карты — как обычно
+        if 0 <= mx < self.w and 0 <= my < self.h:
+            return self.MAP[my][mx]
+
+        # вне карты: разрешаем "пустоту" только там, где есть портал
+        fx = mx + 0.5
+        fy = my + 0.5
+
+        if self.wrap_portals:
+            for direction, span_start, span_end in self.wrap_portals:
+                if direction == "N" and my < 0 and span_start <= fx <= span_end:
+                    return "0"
+                if direction == "S" and my >= self.h and span_start <= fx <= span_end:
+                    return "0"
+                if direction == "W" and mx < 0 and span_start <= fy <= span_end:
+                    return "0"
+                if direction == "E" and mx >= self.w and span_start <= fy <= span_end:
+                    return "0"
+
+        return "1"
 
     def is_wall_cell(self, mx: int, my: int) -> bool:
         return self.cell_at(mx, my) == "1"
@@ -1204,7 +1222,7 @@ class Renderer:
             if tex_coord < 0 or tex_coord > (half * 2):
                 continue
 
-            perp = t
+            perp = max(t - 1e-4, 1e-4)
             lineHeight = int(abs(C.RENDER_H / perp))
             lineHeight = int(clamp(lineHeight, 4, C.RENDER_H * C.MAX_LINEHEIGHT_MULT))
             draw_start = -lineHeight // 2 + C.RENDER_H // 2
@@ -1224,7 +1242,7 @@ class Renderer:
             col_scaled = col_scaled.copy()
             col_scaled.fill((mul, mul, mul), special_flags=pygame.BLEND_MULT)
 
-            if perp < zbuffer[x]:
+            if perp <= zbuffer[x] + 1e-6:
                 self.render.blit(col_scaled, (x, draw_start))
 
     def _draw_sprite(self, zbuffer: List[float], p: Player, spr_pos: Tuple[float, float]) -> None:
@@ -1640,9 +1658,6 @@ class PlayState(State):
                 self.door_orientation,
             ) = self._pick_door(app, pick_reachable)
 
-            dx, dy = self.door_cell
-            self.world.MAP[dy][dx] = "D"
-
             self.zachetki = []
             for prefer in ((self.world.w // 2, self.world.h // 2), (2, self.world.h - 3), (self.world.w - 3, 2)):
                 self.zachetki.append(pick_reachable(prefer, [self.spawn_point, self.door_trigger] + self.zachetki))
@@ -1728,9 +1743,6 @@ class PlayState(State):
         if reset_zachetka:
             self.zachet_collected = [False] * len(self.zachet_collected)
             self.door_open = False
-            dx, dy = self.door_cell
-            if 0 <= dx < self.world.w and 0 <= dy < self.world.h:
-                self.world.MAP[dy][dx] = "D"
 
         self.state = self.STATE_PLAY
         self.dead_time = 0.0
@@ -2009,10 +2021,6 @@ class PlayState(State):
         if not self.zachet_collected:
             self.zachet_collected = [False] * len(self.zachetki)
         self.door_open = bool(data.get("door_open", self.door_open or all(self.zachet_collected)))
-        if not self.door_open:
-            dx, dy = self.door_cell
-            if 0 <= dx < self.world.w and 0 <= dy < self.world.h:
-                self.world.MAP[dy][dx] = "D"
         self.monster_count = max(1, len(self.monsters))
         self.state = self.STATE_PLAY
 
