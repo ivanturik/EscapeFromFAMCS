@@ -709,18 +709,20 @@ class MenuState(State):
 
 
     def handle_event(self, app: "App", event: pygame.event.Event) -> None:
+        if event.type == pygame.MOUSEMOTION:
+            mx, my = event.pos
+            for i, r in enumerate(self.item_rects):
+                if r.collidepoint(mx, my):
+                    self.sel = i
+                    break
+
         if event.type == pygame.KEYDOWN:
             if event.key in (pygame.K_UP, pygame.K_w):
                 self.sel = (self.sel - 1) % len(self.items)
             elif event.key in (pygame.K_DOWN, pygame.K_s):
                 self.sel = (self.sel + 1) % len(self.items)
             elif event.key == pygame.K_RETURN:
-                if self.sel == 0:
-                    app.change_state(PlayState())
-                elif self.sel == 1:
-                    app.change_state(SettingsState())
-                elif self.sel == 2:
-                    app.running = False
+                self._activate(app)
             elif event.key == pygame.K_ESCAPE:
                 app.running = False
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -728,14 +730,16 @@ class MenuState(State):
             for i, r in enumerate(self.item_rects):
                 if r.collidepoint(mx, my):
                     self.sel = i
-                    # выполнить действие как Enter
-                    if self.sel == 0:
-                        app.change_state(PlayState())
-                    elif self.sel == 1:
-                        app.change_state(SettingsState())
-                    elif self.sel == 2:
-                        app.running = False
+                    self._activate(app)
                     break
+
+    def _activate(self, app: "App") -> None:
+        if self.sel == 0:
+            app.change_state(PlayState())
+        elif self.sel == 1:
+            app.change_state(SettingsState())
+        elif self.sel == 2:
+            app.running = False
 
 
     def draw(self, app: "App") -> None:
@@ -763,6 +767,25 @@ class SettingsState(State):
 
 
     def handle_event(self, app: "App", event: pygame.event.Event) -> None:
+        if event.type == pygame.MOUSEMOTION:
+            mx, my = event.pos
+            for i, r in enumerate(self.item_rects):
+                if r.collidepoint(mx, my):
+                    self.sel = i
+                    break
+
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            mx, my = event.pos
+            for i, r in enumerate(self.item_rects):
+                if r.collidepoint(mx, my):
+                    self.sel = i
+                    # toggle / apply
+                    if self.sel in (0, 1, 5):
+                        self._toggle(app)
+                    else:
+                        self._change(app, +1)
+                    return
+
         if event.type != pygame.KEYDOWN:
             return
 
@@ -889,27 +912,11 @@ class PlayState(State):
         pygame.mouse.get_rel()
 
     def handle_event(self, app: "App", event: pygame.event.Event) -> None:
-        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            mx, my = event.pos
-            for i, r in enumerate(self.item_rects):
-                if r.collidepoint(mx, my):
-                    self.sel = i
-                    # Клик по Back
-                if self.sel == 5:
-                    app.change_state(MenuState())
-                else:
-                    # для toggle пунктов можно сделать как Enter
-                    self._toggle(app)
-                return
-
-            if event.type != pygame.KEYDOWN:
-                return
-
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    app.change_state(MenuState())
-                elif event.key == pygame.K_r:
-                    self.reset(app)
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                app.change_state(MenuState())
+            elif event.key == pygame.K_r:
+                self.reset(app)
 
     def update(self, app: "App", dt: float, t: float) -> None:
         keys = pygame.key.get_pressed()
