@@ -143,48 +143,56 @@ MAP_VARIANTS: Tuple[MapSpec, ...] = (
     ),
     MapSpec(
         grid=[
-            "1111111111111111111",
-            "1000000000000100001",
-            "1011111111100101101",
-            "1000000000100100101",
-            "1011110110100100101",
-            "1000010100100000101",
-            "1011010100111111101",
-            "1010010100000000001",
-            "1010010111110111111",
-            "1010010000010100001",
-            "1010011111010101101",
-            "1000010001010100101",
-            "1011110101010100101",
-            "1000000101000000101",
-            "1111111111111111111",
+            "1111111111111111111111111111111",
+            "1000000000000000000000000000001",
+            "1001110111110111110111110111001",
+            "1000101010101010101010101010001",
+            "1000000000000000000000000000001",
+            "1000000000000000000000000000001",
+            "1001110111111111110111110111001",
+            "1000010000001000000100000000001",
+            "1000010000001000000100000000001",
+            "1111111111101010101111111111111",
+            "1001110111110111110111110111001",
+            "1000010000001000000100000000001",
+            "1000010000001000000100000000001",
+            "1000010000001000000100000000001",
+            "1001110111110111110111110111001",
+            "1000101010101010101010101010001",
+            "1000000000000000000000000000001",
+            "1000000000000000000000000000001",
+            "1111111111111111111111111111111",
         ],
     ),
     MapSpec(
         grid=[
-            "11111111111111111111111",
-            "10000000000000000001001",
-            "10111111101111111001001",
-            "10100000101000001001001",
-            "10101110101011101001001",
-            "10101000101000101001001",
-            "10101011101110101001001",
-            "10101010000010101001001",
-            "10101011111010101111001",
-            "10101000001010100000001",
-            "10101111001010101111001",
-            "10100001001010100001001",
-            "10111101001010101101001",
-            "10000001000010100001001",
-            "10111111111110101111001",
-            "10000000000000100001001",
-            "11111111111111111111111",
+            "1111111111111111111111111111111",
+            "1010000100001001010000100001001",
+            "1010000100001000010000100001001",
+            "1011111111111101111110111111001",
+            "1000000000000000000000000000001",
+            "1010000100001000010000100001001",
+            "1010000100001000010000100001001",
+            "1010000100001000010000100001001",
+            "1001111011000001000000111111001",
+            "1010000100000001000000100001001",
+            "1010000100001111111000100001001",
+            "1010000100000001000000100001001",
+            "1000000000000001000000000000001",
+            "1011111111111101111110111111001",
+            "1010000100001000010000100001001",
+            "1010000100001000010000100001001",
+            "1000000000000000000000000000001",
+            "1010000100001000010000100001001",
+            "1010000100001000010000100001001",
+            "1010000100001001010000100001001",
+            "1111111111111111111111111111111",
         ],
     ),
     MapSpec(
         grid=[
-            "111111111111111111",
-            "100000010000000001",
+            "111111100000111111",
+            "100000000000000001",
             "101111010111110101",
             "101001010100010101",
             "101001010100010101",
@@ -197,30 +205,32 @@ MAP_VARIANTS: Tuple[MapSpec, ...] = (
             "101001111110010101",
             "101000000010010101",
             "101111110010010101",
-            "100000010000010001",
-            "111111111111111111",
+            "100000000000000001",
+            "111111100000111111",
         ],
         wrap_portals=(("N", 7.5, 10.5), ("S", 7.5, 10.5)),
     ),
     MapSpec(
         grid=[
-            "1111111111111111111111111",
-            "1000000000000000010000001",
-            "1011111111111111010111101",
-            "1010000000000000010100001",
-            "1010111110111111110101111",
-            "1010100010100000010100001",
-            "1010101110101111010111101",
-            "1010101000101000010000101",
-            "1010101011101011110110101",
-            "1010001010001000000100101",
-            "1011111010111011111100101",
-            "1000000010100000000100101",
-            "1111111010111111100100101",
-            "1000000010000000100000001",
-            "1011111111111111111111101",
-            "1000000000000000000000001",
-            "1111111111111111111111111",
+            "111111111111111111111111111111111",
+            "100100000001000000010000000100001",
+            "101110001001100010011000100110101",
+            "100100000001000000010000000100001",
+            "100100000001000000010000000100001",
+            "100011001000100010001000100110001",
+            "100100000001000000010000000100001",
+            "100100000001000000000000000100001",
+            "100110001001100000001000100110001",
+            "111111000001000000000000000111111",
+            "100000000000000000000000000000001",
+            "100110001001100010011100100110001",
+            "100100000001000000010000000100001",
+            "100100000001000000010000000100001",
+            "100110001001101010111000100110001",
+            "100000000000000000000000000000001",
+            "100100000001000000010000000100001",
+            "100100000001000000010000000100001",
+            "111111111111111111111111111111111",
         ],
     ),
 )
@@ -631,7 +641,15 @@ class AudioSystem:
 DIRS4 = [(1, 0), (-1, 0), (0, 1), (0, -1)]
 
 
-def compute_dist_map(world: World, px: int, py: int) -> List[List[int]]:
+def compute_dist_map(
+    world: World,
+    px: int,
+    py: int,
+    is_blocking: Optional[Any] = None,
+) -> List[List[int]]:
+    if is_blocking is None:
+        is_blocking = world.is_wall_cell
+
     dist = [[-1] * world.w for _ in range(world.h)]
     q = deque()
     dist[py][px] = 0
@@ -642,7 +660,7 @@ def compute_dist_map(world: World, px: int, py: int) -> List[List[int]]:
         d = dist[y][x]
         for dx, dy in DIRS4:
             nx, ny = x + dx, y + dy
-            if 0 <= nx < world.w and 0 <= ny < world.h and dist[ny][nx] == -1 and not world.is_wall_cell(nx, ny):
+            if 0 <= nx < world.w and 0 <= ny < world.h and dist[ny][nx] == -1 and not is_blocking(nx, ny):
                 dist[ny][nx] = d + 1
                 q.append((nx, ny))
     return dist
@@ -1476,37 +1494,62 @@ class PlayState(State):
         app.audio.stop_drone()
 
     def start_new_run(self, app: "App") -> None:
-        self.map_index = random.randrange(len(MAP_VARIANTS))
-        self.world = World(MAP_VARIANTS[self.map_index])
+        attempts = 0
+        while attempts < 10:
+            self.map_index = random.randrange(len(MAP_VARIANTS))
+            self.world = World(MAP_VARIANTS[self.map_index])
 
-        # largest map gets two monsters
-        areas = [len(m.grid) * len(m.grid[0]) for m in MAP_VARIANTS]
-        max_area = max(areas)
-        self.monster_count = 2 if areas[self.map_index] == max_area else 1
+            # largest map gets two monsters
+            areas = [len(m.grid) * len(m.grid[0]) for m in MAP_VARIANTS]
+            max_area = max(areas)
+            self.monster_count = 2 if areas[self.map_index] == max_area else 1
 
-        self.spawn_point = app.find_empty_cell(self.world, (2, 2))
+            self.spawn_point = app.find_empty_cell(self.world, (2, 2))
+            spawn_cell = (int(self.spawn_point[0]), int(self.spawn_point[1]))
+            dist_map = compute_dist_map(self.world, spawn_cell[0], spawn_cell[1])
 
-        def pick_unique(prefer: Tuple[int, int], avoid: List[Tuple[float, float]]) -> Tuple[float, float]:
-            pos = app.find_empty_cell(self.world, prefer)
-            tries = 0
-            while tries < 200:
-                if all(math.hypot(pos[0] - ax, pos[1] - ay) > 2.0 for ax, ay in avoid):
-                    break
-                rx = random.randint(1, self.world.w - 2)
-                ry = random.randint(1, self.world.h - 2)
-                if not self.world.is_wall_cell(rx, ry):
-                    pos = (rx + 0.5, ry + 0.5)
-                tries += 1
-            return pos
+            reachable_cells = [
+                (x, y)
+                for y, row in enumerate(dist_map)
+                for x, d in enumerate(row)
+                if d != -1 and not self.world.is_wall_cell(x, y)
+            ]
 
-        self.door_pos, self.door_orientation = self._pick_door(app, pick_unique)
-        self.zachetki = []
-        for prefer in ((self.world.w // 2, self.world.h // 2), (2, self.world.h - 3), (self.world.w - 3, 2)):
-            self.zachetki.append(pick_unique(prefer, [self.spawn_point, self.door_pos] + self.zachetki))
-        self.zachet_collected = [False] * len(self.zachetki)
-        self.lives = 3
-        self.door_open = False
-        self._respawn(app, reset_zachetka=False)
+            def pick_reachable(prefer: Tuple[int, int], avoid: List[Tuple[float, float]]) -> Tuple[float, float]:
+                candidates = [
+                    (x, y)
+                    for x, y in reachable_cells
+                    if all(math.hypot(x + 0.5 - ax, y + 0.5 - ay) > 2.0 for ax, ay in avoid)
+                ]
+                if not candidates:
+                    candidates = reachable_cells
+                random.shuffle(candidates)
+                candidates.sort(key=lambda c: math.hypot(c[0] + 0.5 - prefer[0], c[1] + 0.5 - prefer[1]))
+                cx, cy = candidates[0]
+                return cx + 0.5, cy + 0.5
+
+            self.door_pos, self.door_orientation = self._pick_door(app, pick_reachable)
+            dx, dy = int(self.door_pos[0]), int(self.door_pos[1])
+            self.world.MAP[dy][dx] = "D"
+
+            self.zachetki = []
+            for prefer in ((self.world.w // 2, self.world.h // 2), (2, self.world.h - 3), (self.world.w - 3, 2)):
+                self.zachetki.append(pick_reachable(prefer, [self.spawn_point, self.door_pos] + self.zachetki))
+
+            sanity_map = compute_dist_map(
+                self.world, spawn_cell[0], spawn_cell[1], lambda mx, my: self.world.cell_at(mx, my) == "1"
+            )
+            targets = [self.door_pos, *self.zachetki]
+            if any(sanity_map[int(ty)][int(tx)] == -1 for tx, ty in targets):
+                attempts += 1
+                continue
+            self.zachet_collected = [False] * len(self.zachetki)
+            self.lives = 3
+            self.door_open = False
+            self._respawn(app, reset_zachetka=False)
+            return
+
+        raise RuntimeError("Failed to generate reachable layout")
 
     def _respawn(self, app: "App", reset_zachetka: bool = False) -> None:
         self.player.x, self.player.y = self.spawn_point
@@ -1526,6 +1569,9 @@ class PlayState(State):
         if reset_zachetka:
             self.zachet_collected = [False] * len(self.zachet_collected)
             self.door_open = False
+            dx, dy = int(self.door_pos[0]), int(self.door_pos[1])
+            if 0 <= dx < self.world.w and 0 <= dy < self.world.h:
+                self.world.MAP[dy][dx] = "D"
 
         self.state = self.STATE_PLAY
         self.dead_time = 0.0
@@ -1584,6 +1630,11 @@ class PlayState(State):
         self.door_open = all(self.zachet_collected)
 
         if self.door_open:
+            dx, dy = int(self.door_pos[0]), int(self.door_pos[1])
+            if self.world.cell_at(dx, dy) == "D":
+                self.world.MAP[dy][dx] = "0"
+
+        if self.door_open:
             if math.hypot(self.player.x - self.door_pos[0], self.player.y - self.door_pos[1]) < 0.85:
                 app.change_state(VictoryState())
 
@@ -1631,9 +1682,9 @@ class PlayState(State):
 
         nx = self.player.x + moveX
         ny = self.player.y + moveY
-        if not self.world.is_wall_cell(int(nx), int(self.player.y)):
+        if not self.world.is_blocking_cell(int(nx), int(self.player.y)):
             self.player.x = nx
-        if not self.world.is_wall_cell(int(self.player.x), int(ny)):
+        if not self.world.is_blocking_cell(int(self.player.x), int(ny)):
             self.player.y = ny
 
         self.world.apply_wrap(self.player)
@@ -1645,7 +1696,7 @@ class PlayState(State):
             return
 
         px_cell, py_cell = int(self.player.x), int(self.player.y)
-        dist_map = compute_dist_map(self.world, px_cell, py_cell)
+        dist_map = compute_dist_map(self.world, px_cell, py_cell, self.world.is_blocking_cell)
 
         min_dist = 999
         for m in self.monsters:
@@ -1674,7 +1725,7 @@ class PlayState(State):
             mdy = ty - m.y
             md = math.hypot(mdx, mdy) + 1e-9
 
-            step = (C.MOVE_SPEED * C.RUN_MULT) * dt
+            step = C.MOVE_SPEED * dt
             mx_try = m.x + (mdx / md) * step
             my_try = m.y + (mdy / md) * step
 
@@ -1690,6 +1741,7 @@ class PlayState(State):
 
             if math.hypot(self.player.x - m.x, self.player.y - m.y) < C.KILL_DIST:
                 self.lose_life(app)
+                return
 
         if min_dist >= 999:
             app.audio.set_game_drone_dynamic(0.12)
@@ -1766,6 +1818,10 @@ class PlayState(State):
         if not self.zachet_collected:
             self.zachet_collected = [False] * len(self.zachetki)
         self.door_open = bool(data.get("door_open", self.door_open or all(self.zachet_collected)))
+        if not self.door_open:
+            dx, dy = int(self.door_pos[0]), int(self.door_pos[1])
+            if 0 <= dx < self.world.w and 0 <= dy < self.world.h and not self.world.is_wall_cell(dx, dy):
+                self.world.MAP[dy][dx] = "D"
         self.monster_count = max(1, len(self.monsters))
         self.state = self.STATE_PLAY
 
@@ -2113,11 +2169,11 @@ class App:
     @staticmethod
     def find_empty_cell(world: World, prefer: Tuple[int, int]) -> Tuple[float, float]:
         px, py = prefer
-        if not world.is_wall_cell(px, py):
+        if not world.is_blocking_cell(px, py):
             return px + 0.5, py + 0.5
         for y in range(1, world.h - 1):
             for x in range(1, world.w - 1):
-                if not world.is_wall_cell(x, y):
+                if not world.is_blocking_cell(x, y):
                     return x + 0.5, y + 0.5
         return 2.5, 2.5
 
