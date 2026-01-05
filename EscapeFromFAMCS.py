@@ -34,8 +34,15 @@ class Const:
     RENDER_H: int = 180
     FPS: int = 60
 
-    # Music
-    MENU_MUSIC_FILE: str = "menu.mp3"
+    # Music / audio
+    MENU_MUSIC_FILE: str = "audio/menu.wav"
+    AMBIENT_FILE: str = "audio/ambient.wav"
+    SCREAM_FILE: str = "audio/scream.wav"
+    END_FILE: str = "audio/end.wav"
+    VICTORY_FILE: str = "audio/victory.wav"
+    UI_CLICK_FILE: str = "audio/ui_click.wav"
+    UI_HOVER_FILE: str = "audio/ui_hover.wav"
+    SEAL_PICKUP_FILE: str = "audio/seal_pickup.wav"
 
     # Gameplay
     MOVE_SPEED: float = 2.6
@@ -51,8 +58,12 @@ class Const:
 
     # Textures / resources
     TEXTURE_SIZE: int = 256
-    MONSTER_FILE: str = "trush.jpg"
-    SCREAM_FILE: str = "scream.mp3"
+    MONSTER_FILE: str = "img/trush.jpg"
+    END_IMG: str = "img/end.jpg"
+    VICTORY_IMG: str = "img/victory.jpg"
+    HEART_IMG: str = "img/heart.png"
+    LEV_IMG: str = "img/Lev.jpg"
+    PRAV_IMG: str = "img/Prav.jpg"
 
     # Monster
     MONSTER_SPAWN_DELAY: float = 1.0
@@ -202,6 +213,18 @@ class AudioSystem:
         self.music_volume = 0.65
         self.sfx_volume = 1.00
 
+        self.ui_hover_sound: Optional[pygame.mixer.Sound] = None
+        self.ui_click_sound: Optional[pygame.mixer.Sound] = None
+
+    @staticmethod
+    def _load_sound(path: str) -> Optional[pygame.mixer.Sound]:
+        if not os.path.exists(path):
+            return None
+        try:
+            return pygame.mixer.Sound(path)
+        except Exception:
+            return None
+
     def init(self) -> None:
         try:
             pygame.mixer.pre_init(44100, -16, 2, 512)
@@ -213,9 +236,14 @@ class AudioSystem:
         self.drone_channel = pygame.mixer.Channel(0)
         self.scream_channel = pygame.mixer.Channel(1)
 
+        # UI can reuse an auto-assigned channel
+
         self.drone = self._make_drone()
         self.scream_path = resource_path(C.SCREAM_FILE)
         self.menu_path = resource_path(C.MENU_MUSIC_FILE)
+
+        self.ui_hover_sound = self._load_sound(resource_path(C.UI_HOVER_FILE))
+        self.ui_click_sound = self._load_sound(resource_path(C.UI_CLICK_FILE))
 
         self._load_scream()
 
@@ -236,6 +264,27 @@ class AudioSystem:
         # scream channel
         if self.scream_channel is not None:
             self.scream_channel.set_volume(self.sfx_volume)
+
+        # ui
+        if self.ui_hover_sound is not None:
+            self.ui_hover_sound.set_volume(self.sfx_volume)
+        if self.ui_click_sound is not None:
+            self.ui_click_sound.set_volume(self.sfx_volume)
+
+    def play_ui_hover(self) -> None:
+        self._play_sfx(self.ui_hover_sound)
+
+    def play_ui_click(self) -> None:
+        self._play_sfx(self.ui_click_sound)
+
+    def _play_sfx(self, snd: Optional[pygame.mixer.Sound]) -> None:
+        if not self.enabled or snd is None:
+            return
+        try:
+            snd.set_volume(self.sfx_volume)
+            snd.play()
+        except Exception:
+            return
 
     # ---------- Menu music ----------
     def play_menu_music(self) -> None:
@@ -458,6 +507,7 @@ class Renderer:
 
         self.font = pygame.font.SysFont("consolas", 18)
         self.big_font = pygame.font.SysFont("consolas", 44, bold=True)
+        self.logo_font = pygame.font.SysFont("consolas", 74, bold=True)
 
     def set_screen(self, new_screen: pygame.Surface) -> None:
         self.screen = new_screen
@@ -490,11 +540,6 @@ class Renderer:
             c = random.randrange(10, 28)
             self.screen.set_at((xx, yy), (c, c, c))
 
-        self.screen.blit(
-            self.font.render("WASD — движение | мышь/←→ — поворот | Shift — бег | R — заново | Esc — меню", True, (10, 10, 10)),
-            (12, 10),
-        )
-
         if is_dead:
             # persistent screamer until restart
             jump = pygame.transform.scale(self.monster_img, (w, h))
@@ -504,7 +549,43 @@ class Renderer:
             txt2 = self.font.render("Нажми R чтобы начать заново", True, (240, 240, 240))
             self.screen.blit(txt2, (w // 2 - txt2.get_width() // 2, int(h * 0.38)))
 
-    def draw_menu(self, title: str, items: List[str], selected: int, hint: str) -> List[pygame.Rect]:
+    @staticmethod
+    def _text_with_outlines(
+        text: str,
+        font: pygame.font.Font,
+        inner_color: Tuple[int, int, int],
+        outline_layers: List[Tuple[Tuple[int, int, int], int]],
+    ) -> pygame.Surface:
+        base = font.render(text, True, inner_color)
+        pad = max((r for _, r in outline_layers), default=0)
+        surf = pygame.Surface((base.get_width() + pad * 2, base.get_height() + pad * 2), pygame.SRCALPHA)
+
+        for color, rad in outline_layers:
+            outline = font.render(text, True, color)
+            offsets = [
+                (-rad, 0),
+                (rad, 0),
+                (0, -rad),
+                (0, rad),
+                (-rad, -rad),
+                (-rad, rad),
+                (rad, -rad),
+                (rad, rad),
+            ]
+            for dx, dy in offsets:
+                surf.blit(outline, (pad + dx, pad + dy))
+
+        surf.blit(base, (pad, pad))
+        return surf
+
+    def draw_menu(
+        self,
+        title: str,
+        items: List[str],
+        selected: int,
+        hint: str = "",
+        famcs_logo: bool = False,
+    ) -> List[pygame.Rect]:
         w, h = self.screen.get_size()
         self.screen.fill((10, 10, 10))
 
@@ -512,8 +593,21 @@ class Renderer:
         mfont = pygame.font.SysFont("consolas", 26)
         sfont = pygame.font.SysFont("consolas", 18)
 
-        t = tfont.render(title, True, (220, 220, 220))
-        self.screen.blit(t, (w // 2 - t.get_width() // 2, int(h * 0.18)))
+        title_y = int(h * 0.18)
+        if famcs_logo:
+            top = tfont.render("ESCAPE FROM", True, (220, 220, 220))
+            self.screen.blit(top, (w // 2 - top.get_width() // 2, title_y - 30))
+
+            famcs = self._text_with_outlines(
+                "FAMCS",
+                self.logo_font,
+                (255, 255, 255),
+                [((0, 120, 255), 4), ((255, 140, 0), 2)],
+            )
+            self.screen.blit(famcs, (w // 2 - famcs.get_width() // 2, title_y))
+        else:
+            t = tfont.render(title, True, (220, 220, 220))
+            self.screen.blit(t, (w // 2 - t.get_width() // 2, title_y))
 
         base_y = int(h * 0.36)
         rects: List[pygame.Rect] = []
@@ -525,8 +619,9 @@ class Renderer:
             self.screen.blit(s, r.topleft)
             rects.append(r)
 
-        hh = sfont.render(hint, True, (130, 130, 130))
-        self.screen.blit(hh, (w // 2 - hh.get_width() // 2, int(h * 0.88)))
+        if hint:
+            hh = sfont.render(hint, True, (130, 130, 130))
+            self.screen.blit(hh, (w // 2 - hh.get_width() // 2, int(h * 0.88)))
 
         return rects
 
@@ -709,33 +804,43 @@ class MenuState(State):
 
 
     def handle_event(self, app: "App", event: pygame.event.Event) -> None:
+        if event.type == pygame.MOUSEMOTION:
+            mx, my = event.pos
+            for i, r in enumerate(self.item_rects):
+                if r.collidepoint(mx, my):
+                    self._set_selected(app, i)
+                    break
+
         if event.type == pygame.KEYDOWN:
             if event.key in (pygame.K_UP, pygame.K_w):
-                self.sel = (self.sel - 1) % len(self.items)
+                self._set_selected(app, (self.sel - 1) % len(self.items))
             elif event.key in (pygame.K_DOWN, pygame.K_s):
-                self.sel = (self.sel + 1) % len(self.items)
+                self._set_selected(app, (self.sel + 1) % len(self.items))
             elif event.key == pygame.K_RETURN:
-                if self.sel == 0:
-                    app.change_state(PlayState())
-                elif self.sel == 1:
-                    app.change_state(SettingsState())
-                elif self.sel == 2:
-                    app.running = False
+                self._activate(app)
             elif event.key == pygame.K_ESCAPE:
                 app.running = False
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             mx, my = event.pos
             for i, r in enumerate(self.item_rects):
                 if r.collidepoint(mx, my):
-                    self.sel = i
-                    # выполнить действие как Enter
-                    if self.sel == 0:
-                        app.change_state(PlayState())
-                    elif self.sel == 1:
-                        app.change_state(SettingsState())
-                    elif self.sel == 2:
-                        app.running = False
+                    self._set_selected(app, i)
+                    self._activate(app)
                     break
+
+    def _set_selected(self, app: "App", idx: int) -> None:
+        if idx != self.sel:
+            self.sel = idx
+            app.audio.play_ui_hover()
+
+    def _activate(self, app: "App") -> None:
+        app.audio.play_ui_click()
+        if self.sel == 0:
+            app.change_state(PlayState())
+        elif self.sel == 1:
+            app.change_state(SettingsState())
+        elif self.sel == 2:
+            app.running = False
 
 
     def draw(self, app: "App") -> None:
@@ -743,7 +848,8 @@ class MenuState(State):
             title="ESCAPE FROM FAMCS",
             items=self.items,
             selected=self.sel,
-            hint="↑/↓ выбрать | Enter подтвердить | Esc выход | ЛКМ клик",
+            hint="",
+            famcs_logo=True,
         )
 
         
@@ -763,13 +869,33 @@ class SettingsState(State):
 
 
     def handle_event(self, app: "App", event: pygame.event.Event) -> None:
+        if event.type == pygame.MOUSEMOTION:
+            mx, my = event.pos
+            for i, r in enumerate(self.item_rects):
+                if r.collidepoint(mx, my):
+                    self._set_selected(app, i)
+                    break
+
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button in (1, 3):
+            mx, my = event.pos
+            for i, r in enumerate(self.item_rects):
+                if r.collidepoint(mx, my):
+                    self._set_selected(app, i)
+                    # toggle / apply
+                    if self.sel in (0, 1, 5):
+                        self._toggle(app)
+                    else:
+                        direction = +1 if event.button == 1 else -1
+                        self._change(app, direction)
+                    return
+
         if event.type != pygame.KEYDOWN:
             return
 
         if event.key in (pygame.K_UP, pygame.K_w):
-            self.sel = (self.sel - 1) % 6
+            self._set_selected(app, (self.sel - 1) % 6)
         elif event.key in (pygame.K_DOWN, pygame.K_s):
-            self.sel = (self.sel + 1) % 6
+            self._set_selected(app, (self.sel + 1) % 6)
 
         elif event.key in (pygame.K_LEFT, pygame.K_a):
             self._change(app, -1)
@@ -785,40 +911,64 @@ class SettingsState(State):
 
     # в handle_event: self.sel = (self.sel + 1) % 6   и (self.sel - 1) % 6
 
+    def _set_selected(self, app: "App", idx: int) -> None:
+        if idx != self.sel:
+            self.sel = idx
+            app.audio.play_ui_hover()
+
     def _change(self, app: "App", direction: int) -> None:
         cfg = app.cfg
         step = 0.05  # 5%
+        changed = False
         if self.sel == 0:
             cfg.invert_mouse_x = not cfg.invert_mouse_x
+            changed = True
         elif self.sel == 1:
             cfg.fullscreen = not cfg.fullscreen
             app.apply_video_settings()
+            changed = True
         elif self.sel == 2:
             if not cfg.fullscreen:
+                before = cfg.window_size
                 cfg.set_res_index(cfg.res_index() + direction)
-                app.apply_video_settings()
+                changed = cfg.window_size != before
+                if changed:
+                    app.apply_video_settings()
         elif self.sel == 3:
-            cfg.music_volume = clamp(cfg.music_volume + direction * step, 0.0, 1.0)
+            new_mv = clamp(cfg.music_volume + direction * step, 0.0, 1.0)
+            changed = new_mv != cfg.music_volume
+            cfg.music_volume = new_mv
         elif self.sel == 4:
-            cfg.sfx_volume = clamp(cfg.sfx_volume + direction * step, 0.0, 1.0)
+            new_sv = clamp(cfg.sfx_volume + direction * step, 0.0, 1.0)
+            changed = new_sv != cfg.sfx_volume
+            cfg.sfx_volume = new_sv
         elif self.sel == 5:
             pass
 
-        app.audio.apply_volumes(cfg.music_volume, cfg.sfx_volume)
-        app.save_config()
+        if changed:
+            app.audio.play_ui_click()
+            app.audio.apply_volumes(cfg.music_volume, cfg.sfx_volume)
+            app.save_config()
 
     def _toggle(self, app: "App") -> None:
         cfg = app.cfg
+        changed = False
         if self.sel == 0:
             cfg.invert_mouse_x = not cfg.invert_mouse_x
+            changed = True
         elif self.sel == 1:
             cfg.fullscreen = not cfg.fullscreen
             app.apply_video_settings()
+            changed = True
         elif self.sel == 5:
+            app.audio.play_ui_click()
             app.change_state(MenuState())
+            return
 
-        app.audio.apply_volumes(cfg.music_volume, cfg.sfx_volume)
-        app.save_config()
+        if changed:
+            app.audio.play_ui_click()
+            app.audio.apply_volumes(cfg.music_volume, cfg.sfx_volume)
+            app.save_config()
 
 
     def draw(self, app: "App") -> None:
@@ -838,7 +988,7 @@ class SettingsState(State):
             title="Settings",
             items=items,
             selected=self.sel,
-            hint="↑/↓ выбрать | ←/→ изменить | Enter toggle | Esc назад | ЛКМ клик",
+            hint="",
         )
 
 
@@ -889,37 +1039,19 @@ class PlayState(State):
         pygame.mouse.get_rel()
 
     def handle_event(self, app: "App", event: pygame.event.Event) -> None:
-        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            mx, my = event.pos
-            for i, r in enumerate(self.item_rects):
-                if r.collidepoint(mx, my):
-                    self.sel = i
-                    # Клик по Back
-                if self.sel == 5:
-                    app.change_state(MenuState())
-                else:
-                    # для toggle пунктов можно сделать как Enter
-                    self._toggle(app)
-                return
-
-            if event.type != pygame.KEYDOWN:
-                return
-
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    app.change_state(MenuState())
-                elif event.key == pygame.K_r:
-                    self.reset(app)
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                app.change_state(MenuState())
+            elif event.key == pygame.K_r:
+                self.reset(app)
 
     def update(self, app: "App", dt: float, t: float) -> None:
         keys = pygame.key.get_pressed()
 
         # mouse rotate
         mx, _ = pygame.mouse.get_rel()
-        if app.cfg.invert_mouse_x:
-            ang_mouse = +mx * C.MOUSE_SENS
-        else:
-            ang_mouse = -mx * C.MOUSE_SENS
+        rot_dir = -1.0 if app.cfg.invert_mouse_x else 1.0
+        ang_mouse = rot_dir * mx * C.MOUSE_SENS
 
         if abs(ang_mouse) > 1e-9:
             self.player.rotate(ang_mouse)
@@ -927,7 +1059,7 @@ class PlayState(State):
 
         # arrows rotate (optional)
         if keys[pygame.K_LEFT] or keys[pygame.K_RIGHT]:
-            angk = C.ROT_SPEED_KEYS * dt
+            angk = C.ROT_SPEED_KEYS * dt * rot_dir
             angk = +angk if keys[pygame.K_LEFT] else -angk
             self.player.rotate(angk)
 
@@ -1164,11 +1296,11 @@ class App:
 
 if __name__ == "__main__":
     # Packaging notes:
-    # Windows:
-    # pyinstaller --noconfirm --onefile --windowed --name TrushHORROR ^
-    #   --add-data "trush.jpg;." --add-data "scream.mp3;." horror_game.py
+    # Windows (one folder to keep assets in img/ and audio/):
+    # pyinstaller --noconfirm --windowed --name "ESCAPE FROM FAMCS" ^
+    #   --add-data "img;img" --add-data "audio;audio" EscapeFromFAMCS.py
     #
     # macOS:
-    # pyinstaller --noconfirm --windowed --name TrushHORROR \
-    #   --add-data "trush.jpg:." --add-data "scream.mp3:." horror_game.py
+    # pyinstaller --noconfirm --windowed --name "ESCAPE FROM FAMCS" \
+    #   --add-data "img:img" --add-data "audio:audio" EscapeFromFAMCS.py
     App().run()
