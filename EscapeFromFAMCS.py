@@ -458,6 +458,7 @@ class Renderer:
 
         self.font = pygame.font.SysFont("consolas", 18)
         self.big_font = pygame.font.SysFont("consolas", 44, bold=True)
+        self.logo_font = pygame.font.SysFont("consolas", 74, bold=True)
 
     def set_screen(self, new_screen: pygame.Surface) -> None:
         self.screen = new_screen
@@ -490,11 +491,6 @@ class Renderer:
             c = random.randrange(10, 28)
             self.screen.set_at((xx, yy), (c, c, c))
 
-        self.screen.blit(
-            self.font.render("WASD — движение | мышь/←→ — поворот | Shift — бег | R — заново | Esc — меню", True, (10, 10, 10)),
-            (12, 10),
-        )
-
         if is_dead:
             # persistent screamer until restart
             jump = pygame.transform.scale(self.monster_img, (w, h))
@@ -504,7 +500,43 @@ class Renderer:
             txt2 = self.font.render("Нажми R чтобы начать заново", True, (240, 240, 240))
             self.screen.blit(txt2, (w // 2 - txt2.get_width() // 2, int(h * 0.38)))
 
-    def draw_menu(self, title: str, items: List[str], selected: int, hint: str) -> List[pygame.Rect]:
+    @staticmethod
+    def _text_with_outlines(
+        text: str,
+        font: pygame.font.Font,
+        inner_color: Tuple[int, int, int],
+        outline_layers: List[Tuple[Tuple[int, int, int], int]],
+    ) -> pygame.Surface:
+        base = font.render(text, True, inner_color)
+        pad = max((r for _, r in outline_layers), default=0)
+        surf = pygame.Surface((base.get_width() + pad * 2, base.get_height() + pad * 2), pygame.SRCALPHA)
+
+        for color, rad in outline_layers:
+            outline = font.render(text, True, color)
+            offsets = [
+                (-rad, 0),
+                (rad, 0),
+                (0, -rad),
+                (0, rad),
+                (-rad, -rad),
+                (-rad, rad),
+                (rad, -rad),
+                (rad, rad),
+            ]
+            for dx, dy in offsets:
+                surf.blit(outline, (pad + dx, pad + dy))
+
+        surf.blit(base, (pad, pad))
+        return surf
+
+    def draw_menu(
+        self,
+        title: str,
+        items: List[str],
+        selected: int,
+        hint: str = "",
+        famcs_logo: bool = False,
+    ) -> List[pygame.Rect]:
         w, h = self.screen.get_size()
         self.screen.fill((10, 10, 10))
 
@@ -512,8 +544,21 @@ class Renderer:
         mfont = pygame.font.SysFont("consolas", 26)
         sfont = pygame.font.SysFont("consolas", 18)
 
-        t = tfont.render(title, True, (220, 220, 220))
-        self.screen.blit(t, (w // 2 - t.get_width() // 2, int(h * 0.18)))
+        title_y = int(h * 0.18)
+        if famcs_logo:
+            top = tfont.render("ESCAPE FROM", True, (220, 220, 220))
+            self.screen.blit(top, (w // 2 - top.get_width() // 2, title_y - 30))
+
+            famcs = self._text_with_outlines(
+                "FAMCS",
+                self.logo_font,
+                (255, 255, 255),
+                [((0, 120, 255), 4), ((255, 140, 0), 2)],
+            )
+            self.screen.blit(famcs, (w // 2 - famcs.get_width() // 2, title_y))
+        else:
+            t = tfont.render(title, True, (220, 220, 220))
+            self.screen.blit(t, (w // 2 - t.get_width() // 2, title_y))
 
         base_y = int(h * 0.36)
         rects: List[pygame.Rect] = []
@@ -525,8 +570,9 @@ class Renderer:
             self.screen.blit(s, r.topleft)
             rects.append(r)
 
-        hh = sfont.render(hint, True, (130, 130, 130))
-        self.screen.blit(hh, (w // 2 - hh.get_width() // 2, int(h * 0.88)))
+        if hint:
+            hh = sfont.render(hint, True, (130, 130, 130))
+            self.screen.blit(hh, (w // 2 - hh.get_width() // 2, int(h * 0.88)))
 
         return rects
 
@@ -747,7 +793,8 @@ class MenuState(State):
             title="ESCAPE FROM FAMCS",
             items=self.items,
             selected=self.sel,
-            hint="↑/↓ выбрать | Enter подтвердить | Esc выход | ЛКМ клик",
+            hint="",
+            famcs_logo=True,
         )
 
         
@@ -861,7 +908,7 @@ class SettingsState(State):
             title="Settings",
             items=items,
             selected=self.sel,
-            hint="↑/↓ выбрать | ←/→ изменить | Enter toggle | Esc назад | ЛКМ клик",
+            hint="",
         )
 
 
@@ -923,10 +970,8 @@ class PlayState(State):
 
         # mouse rotate
         mx, _ = pygame.mouse.get_rel()
-        if app.cfg.invert_mouse_x:
-            ang_mouse = +mx * C.MOUSE_SENS
-        else:
-            ang_mouse = -mx * C.MOUSE_SENS
+        rot_dir = -1.0 if app.cfg.invert_mouse_x else 1.0
+        ang_mouse = rot_dir * mx * C.MOUSE_SENS
 
         if abs(ang_mouse) > 1e-9:
             self.player.rotate(ang_mouse)
@@ -934,7 +979,7 @@ class PlayState(State):
 
         # arrows rotate (optional)
         if keys[pygame.K_LEFT] or keys[pygame.K_RIGHT]:
-            angk = C.ROT_SPEED_KEYS * dt
+            angk = C.ROT_SPEED_KEYS * dt * rot_dir
             angk = +angk if keys[pygame.K_LEFT] else -angk
             self.player.rotate(angk)
 
