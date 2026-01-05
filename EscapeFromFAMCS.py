@@ -5,7 +5,7 @@ import random
 from dataclasses import dataclass
 from collections import deque
 from array import array
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict, Any
 
 import pygame
 
@@ -34,8 +34,15 @@ class Const:
     RENDER_H: int = 180
     FPS: int = 60
 
-    # Music
-    MENU_MUSIC_FILE: str = "menu.mp3"
+    # Music / audio
+    MENU_MUSIC_FILE: str = "audio/menu.wav"
+    AMBIENT_FILE: str = "audio/ambient.wav"
+    SCREAM_FILE: str = "audio/scream.wav"
+    END_FILE: str = "audio/end.wav"
+    VICTORY_FILE: str = "audio/victory.wav"
+    UI_CLICK_FILE: str = "audio/ui_click.wav"
+    UI_HOVER_FILE: str = "audio/ui_hover.wav"
+    SEAL_PICKUP_FILE: str = "audio/seal_pickup.wav"
 
     # Gameplay
     MOVE_SPEED: float = 2.6
@@ -51,8 +58,14 @@ class Const:
 
     # Textures / resources
     TEXTURE_SIZE: int = 256
-    MONSTER_FILE: str = "trush.jpg"
-    SCREAM_FILE: str = "scream.mp3"
+    MONSTER_FILE: str = "img/trush.jpg"
+    END_IMG: str = "img/end.jpg"
+    VICTORY_IMG: str = "img/victory.jpg"
+    HEART_IMG: str = "img/heart.png"
+    ZACHET_IMG: str = "img/zachetka.png"
+    DOOR_IMG: str = "img/door.png"
+    LEV_IMG: str = "img/Lev.jpg"
+    PRAV_IMG: str = "img/Prav.jpg"
 
     # Monster
     MONSTER_SPAWN_DELAY: float = 1.0
@@ -191,6 +204,9 @@ class AudioSystem:
         self.drone_channel: Optional[pygame.mixer.Channel] = None
         self.drone_dynamic = 0.10  # базовый уровень (до умножения на sfx_volume)
 
+        self.ambient_sound: Optional[pygame.mixer.Sound] = None
+        self.ambient_channel: Optional[pygame.mixer.Channel] = None
+
         self.scream_sound: Optional[pygame.mixer.Sound] = None
         self.scream_channel: Optional[pygame.mixer.Channel] = None
         self.use_music_for_scream = False
@@ -202,6 +218,21 @@ class AudioSystem:
         self.music_volume = 0.65
         self.sfx_volume = 1.00
 
+        self.ui_hover_sound: Optional[pygame.mixer.Sound] = None
+        self.ui_click_sound: Optional[pygame.mixer.Sound] = None
+        self.pickup_sound: Optional[pygame.mixer.Sound] = None
+        self.victory_sound: Optional[pygame.mixer.Sound] = None
+        self.end_sound: Optional[pygame.mixer.Sound] = None
+
+    @staticmethod
+    def _load_sound(path: str) -> Optional[pygame.mixer.Sound]:
+        if not os.path.exists(path):
+            return None
+        try:
+            return pygame.mixer.Sound(path)
+        except Exception:
+            return None
+
     def init(self) -> None:
         try:
             pygame.mixer.pre_init(44100, -16, 2, 512)
@@ -212,10 +243,20 @@ class AudioSystem:
 
         self.drone_channel = pygame.mixer.Channel(0)
         self.scream_channel = pygame.mixer.Channel(1)
+        self.ambient_channel = pygame.mixer.Channel(2)
+
+        # UI can reuse an auto-assigned channel
 
         self.drone = self._make_drone()
+        self.ambient_sound = self._load_sound(resource_path(C.AMBIENT_FILE))
         self.scream_path = resource_path(C.SCREAM_FILE)
         self.menu_path = resource_path(C.MENU_MUSIC_FILE)
+
+        self.ui_hover_sound = self._load_sound(resource_path(C.UI_HOVER_FILE))
+        self.ui_click_sound = self._load_sound(resource_path(C.UI_CLICK_FILE))
+        self.pickup_sound = self._load_sound(resource_path(C.SEAL_PICKUP_FILE))
+        self.victory_sound = self._load_sound(resource_path(C.VICTORY_FILE))
+        self.end_sound = self._load_sound(resource_path(C.END_FILE))
 
         self._load_scream()
 
@@ -233,9 +274,53 @@ class AudioSystem:
         # drone channel volume обновится при set_game_drone_dynamic
         self.set_game_drone_dynamic(self.drone_dynamic)
 
+        if self.ambient_channel is not None:
+            self.ambient_channel.set_volume(0.25 * self.sfx_volume)
+        if self.ambient_sound is not None:
+            try:
+                self.ambient_sound.set_volume(0.25 * self.sfx_volume)
+            except Exception:
+                pass
+
         # scream channel
         if self.scream_channel is not None:
             self.scream_channel.set_volume(self.sfx_volume)
+
+        # ui
+        if self.ui_hover_sound is not None:
+            self.ui_hover_sound.set_volume(self.sfx_volume)
+        if self.ui_click_sound is not None:
+            self.ui_click_sound.set_volume(self.sfx_volume)
+        if self.pickup_sound is not None:
+            self.pickup_sound.set_volume(self.sfx_volume)
+        if self.victory_sound is not None:
+            self.victory_sound.set_volume(self.sfx_volume)
+        if self.end_sound is not None:
+            self.end_sound.set_volume(self.sfx_volume)
+
+    def play_ui_hover(self) -> None:
+        self._play_sfx(self.ui_hover_sound)
+
+    def play_ui_click(self) -> None:
+        self._play_sfx(self.ui_click_sound)
+
+    def play_pickup(self) -> None:
+        self._play_sfx(self.pickup_sound)
+
+    def play_victory(self) -> None:
+        self._play_sfx(self.victory_sound)
+
+    def play_end(self) -> None:
+        self._play_sfx(self.end_sound)
+
+    def _play_sfx(self, snd: Optional[pygame.mixer.Sound]) -> None:
+        if not self.enabled or snd is None:
+            return
+        try:
+            snd.set_volume(self.sfx_volume)
+            snd.play()
+        except Exception:
+            return
 
     # ---------- Menu music ----------
     def play_menu_music(self) -> None:
@@ -266,22 +351,38 @@ class AudioSystem:
             pass
         self.music_playing = False
 
-    # ---------- Drone (game ambience) ----------
+    # ---------- Drone / ambient (game ambience) ----------
     def start_drone(self) -> None:
-        if not self.enabled or self.drone is None or self.drone_channel is None:
+        if not self.enabled:
+            return
+        # ambient file has priority; drone is fallback
+        if self.ambient_sound is not None and self.ambient_channel is not None:
+            if not self.ambient_channel.get_busy():
+                self.ambient_channel.play(self.ambient_sound, loops=-1)
+            self.ambient_channel.set_volume(0.25 * self.sfx_volume)
+            return
+
+        if self.drone is None or self.drone_channel is None:
             return
         if not self.drone_channel.get_busy():
             self.drone_channel.play(self.drone, loops=-1)
         self.set_game_drone_dynamic(self.drone_dynamic)
 
     def stop_drone(self) -> None:
+        if self.ambient_channel is not None:
+            self.ambient_channel.stop()
         if self.drone_channel is not None:
             self.drone_channel.stop()
 
     def set_game_drone_dynamic(self, vol01: float) -> None:
         # vol01 — то, что ты считал по дистанции; сверху умножаем на sfx_volume
         self.drone_dynamic = clamp(vol01, 0.0, 1.0)
-        if not self.enabled or self.drone_channel is None:
+        if not self.enabled:
+            return
+        if self.ambient_channel is not None and self.ambient_channel.get_busy():
+            self.ambient_channel.set_volume(0.25 * self.sfx_volume)
+            return
+        if self.drone_channel is None:
             return
         self.drone_channel.set_volume(self.drone_dynamic * self.sfx_volume)
 
@@ -449,15 +550,31 @@ def vignette_surface(w: int, h: int) -> pygame.Surface:
 
 
 class Renderer:
-    def __init__(self, screen: pygame.Surface, wall_tex: pygame.Surface, monster_img: pygame.Surface):
+    def __init__(
+        self,
+        screen: pygame.Surface,
+        wall_tex: pygame.Surface,
+        monster_img: pygame.Surface,
+        heart_img: pygame.Surface,
+        zachet_img: pygame.Surface,
+        door_img: pygame.Surface,
+        victory_img: pygame.Surface,
+        end_img: pygame.Surface,
+    ):
         self.screen = screen
         self.render = pygame.Surface((C.RENDER_W, C.RENDER_H))
         self.wall_tex = wall_tex
         self.monster_img = monster_img
+        self.heart_img = heart_img
+        self.zachet_img = zachet_img
+        self.door_img = door_img
+        self.victory_img = victory_img
+        self.end_img = end_img
         self._rebuild_overlay()
 
         self.font = pygame.font.SysFont("consolas", 18)
         self.big_font = pygame.font.SysFont("consolas", 44, bold=True)
+        self.logo_font = pygame.font.SysFont("consolas", 74, bold=True)
 
     def set_screen(self, new_screen: pygame.Surface) -> None:
         self.screen = new_screen
@@ -467,7 +584,19 @@ class Renderer:
         w, h = self.screen.get_size()
         self.vin = vignette_surface(w, h)
 
-    def draw_play(self, world: World, player: Player, monster: Monster, show_monster: bool, is_dead: bool) -> None:
+    def draw_play(
+        self,
+        world: World,
+        player: Player,
+        monster: Monster,
+        show_monster: bool,
+        is_dead: bool,
+        door_pos: Optional[Tuple[float, float]] = None,
+        door_open: bool = False,
+        zachetka_pos: Optional[Tuple[float, float]] = None,
+        lives: int = 3,
+        zachetka_collected: bool = False,
+    ) -> None:
         self.render.fill(C.CEIL_COLOR)
         pygame.draw.rect(self.render, C.FLOOR_COLOR, (0, C.RENDER_H // 2, C.RENDER_W, C.RENDER_H // 2))
 
@@ -476,6 +605,11 @@ class Renderer:
 
         if show_monster and not is_dead:
             self._draw_sprite(zbuffer, player, (monster.x, monster.y))
+
+        if zachetka_pos is not None and not zachetka_collected:
+            self._draw_billboard(zbuffer, player, zachetka_pos, self.zachet_img)
+        if door_pos is not None:
+            self._draw_billboard(zbuffer, player, door_pos, self.door_img, dim=not door_open)
 
         # upscale to screen
         w, h = self.screen.get_size()
@@ -490,11 +624,6 @@ class Renderer:
             c = random.randrange(10, 28)
             self.screen.set_at((xx, yy), (c, c, c))
 
-        self.screen.blit(
-            self.font.render("WASD — движение | мышь/←→ — поворот | Shift — бег | R — заново | Esc — меню", True, (10, 10, 10)),
-            (12, 10),
-        )
-
         if is_dead:
             # persistent screamer until restart
             jump = pygame.transform.scale(self.monster_img, (w, h))
@@ -503,8 +632,54 @@ class Renderer:
             self.screen.blit(txt, (w // 2 - txt.get_width() // 2, int(h * 0.26)))
             txt2 = self.font.render("Нажми R чтобы начать заново", True, (240, 240, 240))
             self.screen.blit(txt2, (w // 2 - txt2.get_width() // 2, int(h * 0.38)))
+            return
 
-    def draw_menu(self, title: str, items: List[str], selected: int, hint: str) -> List[pygame.Rect]:
+        # HUD (lives + zachetka)
+        heart = pygame.transform.smoothscale(self.heart_img, (28, 28))
+        for i in range(max(0, lives)):
+            self.screen.blit(heart, (12 + i * 32, 12))
+
+        if zachetka_collected:
+            icon = pygame.transform.smoothscale(self.zachet_img, (34, 34))
+            self.screen.blit(icon, (12, 50))
+
+    @staticmethod
+    def _text_with_outlines(
+        text: str,
+        font: pygame.font.Font,
+        inner_color: Tuple[int, int, int],
+        outline_layers: List[Tuple[Tuple[int, int, int], int]],
+    ) -> pygame.Surface:
+        base = font.render(text, True, inner_color)
+        pad = max((r for _, r in outline_layers), default=0)
+        surf = pygame.Surface((base.get_width() + pad * 2, base.get_height() + pad * 2), pygame.SRCALPHA)
+
+        for color, rad in outline_layers:
+            outline = font.render(text, True, color)
+            offsets = [
+                (-rad, 0),
+                (rad, 0),
+                (0, -rad),
+                (0, rad),
+                (-rad, -rad),
+                (-rad, rad),
+                (rad, -rad),
+                (rad, rad),
+            ]
+            for dx, dy in offsets:
+                surf.blit(outline, (pad + dx, pad + dy))
+
+        surf.blit(base, (pad, pad))
+        return surf
+
+    def draw_menu(
+        self,
+        title: str,
+        items: List[str],
+        selected: int,
+        hint: str = "",
+        famcs_logo: bool = False,
+    ) -> List[pygame.Rect]:
         w, h = self.screen.get_size()
         self.screen.fill((10, 10, 10))
 
@@ -512,8 +687,21 @@ class Renderer:
         mfont = pygame.font.SysFont("consolas", 26)
         sfont = pygame.font.SysFont("consolas", 18)
 
-        t = tfont.render(title, True, (220, 220, 220))
-        self.screen.blit(t, (w // 2 - t.get_width() // 2, int(h * 0.18)))
+        title_y = int(h * 0.18)
+        if famcs_logo:
+            top = tfont.render("ESCAPE FROM", True, (220, 220, 220))
+            self.screen.blit(top, (w // 2 - top.get_width() // 2, title_y - 30))
+
+            famcs = self._text_with_outlines(
+                "FAMCS",
+                self.logo_font,
+                (255, 255, 255),
+                [((0, 120, 255), 4), ((255, 140, 0), 2)],
+            )
+            self.screen.blit(famcs, (w // 2 - famcs.get_width() // 2, title_y))
+        else:
+            t = tfont.render(title, True, (220, 220, 220))
+            self.screen.blit(t, (w // 2 - t.get_width() // 2, title_y))
 
         base_y = int(h * 0.36)
         rects: List[pygame.Rect] = []
@@ -525,10 +713,19 @@ class Renderer:
             self.screen.blit(s, r.topleft)
             rects.append(r)
 
-        hh = sfont.render(hint, True, (130, 130, 130))
-        self.screen.blit(hh, (w // 2 - hh.get_width() // 2, int(h * 0.88)))
+        if hint:
+            hh = sfont.render(hint, True, (130, 130, 130))
+            self.screen.blit(hh, (w // 2 - hh.get_width() // 2, int(h * 0.88)))
 
         return rects
+
+    def draw_fullscreen_image(self, img: pygame.Surface, caption: str = "") -> None:
+        w, h = self.screen.get_size()
+        scaled = pygame.transform.scale(img, (w, h))
+        self.screen.blit(scaled, (0, 0))
+        if caption:
+            txt = self.big_font.render(caption, True, (240, 240, 240))
+            self.screen.blit(txt, (w // 2 - txt.get_width() // 2, int(h * 0.82)))
 
 
     def _cast_walls(self, world: World, p: Player, zbuffer: List[float]) -> None:
@@ -672,6 +869,60 @@ class Renderer:
                 col = tex_scaled.subsurface((tx, offset_y, 1, vis_h))
                 self.render.blit(col, (stripe, clip_sy))
 
+    def _draw_billboard(
+        self,
+        zbuffer: List[float],
+        p: Player,
+        spr_pos: Tuple[float, float],
+        tex: pygame.Surface,
+        dim: bool = False,
+    ) -> None:
+        sprX = spr_pos[0] - p.x
+        sprY = spr_pos[1] - p.y
+
+        inv_det = 1.0 / (p.planex * p.diry - p.dirx * p.planey + 1e-9)
+        transformX = inv_det * (p.diry * sprX - p.dirx * sprY)
+        transformY = inv_det * (-p.planey * sprX + p.planex * sprY)
+
+        if transformY <= 0.06:
+            return
+
+        screen_x = int((C.RENDER_W / 2) * (1 + transformX / transformY))
+
+        sprite_h = int(abs(C.RENDER_H / transformY))
+        sprite_h = int(clamp(sprite_h, 6, C.RENDER_H * 2))
+        sprite_w = sprite_h
+
+        start_y = -sprite_h // 2 + C.RENDER_H // 2
+        end_y = start_y + sprite_h
+        start_x = -sprite_w // 2 + screen_x
+        end_x = start_x + sprite_w
+
+        clip_sy = max(0, start_y)
+        clip_ey = min(C.RENDER_H, end_y)
+        if clip_ey <= clip_sy:
+            return
+        offset_y = clip_sy - start_y
+        vis_h = clip_ey - clip_sy
+
+        tex_scaled = pygame.transform.smoothscale(tex, (sprite_w, sprite_h))
+        fog_factor = math.exp(-C.FOG_STRENGTH * transformY * 22.0)
+        mul = int(255 * fog_factor)
+        mul = int(clamp(mul, 80 if dim else 120, 255))
+        tex_scaled = tex_scaled.copy()
+        tex_scaled.fill((mul, mul, mul), special_flags=pygame.BLEND_MULT)
+
+        clip_sx = max(0, start_x)
+        clip_ex = min(C.RENDER_W, end_x)
+
+        for stripe in range(clip_sx, clip_ex):
+            if transformY >= zbuffer[stripe]:
+                continue
+            tx = stripe - start_x
+            if 0 <= tx < sprite_w:
+                col = tex_scaled.subsurface((tx, offset_y, 1, vis_h))
+                self.render.blit(col, (stripe, clip_sy))
+
 
 # ============================================================
 # 8) States (Menu / Settings / Play)
@@ -709,33 +960,43 @@ class MenuState(State):
 
 
     def handle_event(self, app: "App", event: pygame.event.Event) -> None:
+        if event.type == pygame.MOUSEMOTION:
+            mx, my = event.pos
+            for i, r in enumerate(self.item_rects):
+                if r.collidepoint(mx, my):
+                    self._set_selected(app, i)
+                    break
+
         if event.type == pygame.KEYDOWN:
             if event.key in (pygame.K_UP, pygame.K_w):
-                self.sel = (self.sel - 1) % len(self.items)
+                self._set_selected(app, (self.sel - 1) % len(self.items))
             elif event.key in (pygame.K_DOWN, pygame.K_s):
-                self.sel = (self.sel + 1) % len(self.items)
+                self._set_selected(app, (self.sel + 1) % len(self.items))
             elif event.key == pygame.K_RETURN:
-                if self.sel == 0:
-                    app.change_state(PlayState())
-                elif self.sel == 1:
-                    app.change_state(SettingsState())
-                elif self.sel == 2:
-                    app.running = False
+                self._activate(app)
             elif event.key == pygame.K_ESCAPE:
                 app.running = False
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             mx, my = event.pos
             for i, r in enumerate(self.item_rects):
                 if r.collidepoint(mx, my):
-                    self.sel = i
-                    # выполнить действие как Enter
-                    if self.sel == 0:
-                        app.change_state(PlayState())
-                    elif self.sel == 1:
-                        app.change_state(SettingsState())
-                    elif self.sel == 2:
-                        app.running = False
+                    self._set_selected(app, i)
+                    self._activate(app)
                     break
+
+    def _set_selected(self, app: "App", idx: int) -> None:
+        if idx != self.sel:
+            self.sel = idx
+            app.audio.play_ui_hover()
+
+    def _activate(self, app: "App") -> None:
+        app.audio.play_ui_click()
+        if self.sel == 0:
+            app.change_state(PlayState())
+        elif self.sel == 1:
+            app.change_state(SettingsState())
+        elif self.sel == 2:
+            app.running = False
 
 
     def draw(self, app: "App") -> None:
@@ -743,7 +1004,8 @@ class MenuState(State):
             title="ESCAPE FROM FAMCS",
             items=self.items,
             selected=self.sel,
-            hint="↑/↓ выбрать | Enter подтвердить | Esc выход | ЛКМ клик",
+            hint="",
+            famcs_logo=True,
         )
 
         
@@ -763,13 +1025,33 @@ class SettingsState(State):
 
 
     def handle_event(self, app: "App", event: pygame.event.Event) -> None:
+        if event.type == pygame.MOUSEMOTION:
+            mx, my = event.pos
+            for i, r in enumerate(self.item_rects):
+                if r.collidepoint(mx, my):
+                    self._set_selected(app, i)
+                    break
+
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button in (1, 3):
+            mx, my = event.pos
+            for i, r in enumerate(self.item_rects):
+                if r.collidepoint(mx, my):
+                    self._set_selected(app, i)
+                    # toggle / apply
+                    if self.sel in (0, 1, 5):
+                        self._toggle(app)
+                    else:
+                        direction = +1 if event.button == 1 else -1
+                        self._change(app, direction)
+                    return
+
         if event.type != pygame.KEYDOWN:
             return
 
         if event.key in (pygame.K_UP, pygame.K_w):
-            self.sel = (self.sel - 1) % 6
+            self._set_selected(app, (self.sel - 1) % 6)
         elif event.key in (pygame.K_DOWN, pygame.K_s):
-            self.sel = (self.sel + 1) % 6
+            self._set_selected(app, (self.sel + 1) % 6)
 
         elif event.key in (pygame.K_LEFT, pygame.K_a):
             self._change(app, -1)
@@ -785,40 +1067,64 @@ class SettingsState(State):
 
     # в handle_event: self.sel = (self.sel + 1) % 6   и (self.sel - 1) % 6
 
+    def _set_selected(self, app: "App", idx: int) -> None:
+        if idx != self.sel:
+            self.sel = idx
+            app.audio.play_ui_hover()
+
     def _change(self, app: "App", direction: int) -> None:
         cfg = app.cfg
         step = 0.05  # 5%
+        changed = False
         if self.sel == 0:
             cfg.invert_mouse_x = not cfg.invert_mouse_x
+            changed = True
         elif self.sel == 1:
             cfg.fullscreen = not cfg.fullscreen
             app.apply_video_settings()
+            changed = True
         elif self.sel == 2:
             if not cfg.fullscreen:
+                before = cfg.window_size
                 cfg.set_res_index(cfg.res_index() + direction)
-                app.apply_video_settings()
+                changed = cfg.window_size != before
+                if changed:
+                    app.apply_video_settings()
         elif self.sel == 3:
-            cfg.music_volume = clamp(cfg.music_volume + direction * step, 0.0, 1.0)
+            new_mv = clamp(cfg.music_volume + direction * step, 0.0, 1.0)
+            changed = new_mv != cfg.music_volume
+            cfg.music_volume = new_mv
         elif self.sel == 4:
-            cfg.sfx_volume = clamp(cfg.sfx_volume + direction * step, 0.0, 1.0)
+            new_sv = clamp(cfg.sfx_volume + direction * step, 0.0, 1.0)
+            changed = new_sv != cfg.sfx_volume
+            cfg.sfx_volume = new_sv
         elif self.sel == 5:
             pass
 
-        app.audio.apply_volumes(cfg.music_volume, cfg.sfx_volume)
-        app.save_config()
+        if changed:
+            app.audio.play_ui_click()
+            app.audio.apply_volumes(cfg.music_volume, cfg.sfx_volume)
+            app.save_config()
 
     def _toggle(self, app: "App") -> None:
         cfg = app.cfg
+        changed = False
         if self.sel == 0:
             cfg.invert_mouse_x = not cfg.invert_mouse_x
+            changed = True
         elif self.sel == 1:
             cfg.fullscreen = not cfg.fullscreen
             app.apply_video_settings()
+            changed = True
         elif self.sel == 5:
+            app.audio.play_ui_click()
             app.change_state(MenuState())
+            return
 
-        app.audio.apply_volumes(cfg.music_volume, cfg.sfx_volume)
-        app.save_config()
+        if changed:
+            app.audio.play_ui_click()
+            app.audio.apply_volumes(cfg.music_volume, cfg.sfx_volume)
+            app.save_config()
 
 
     def draw(self, app: "App") -> None:
@@ -838,7 +1144,7 @@ class SettingsState(State):
             title="Settings",
             items=items,
             selected=self.sel,
-            hint="↑/↓ выбрать | ←/→ изменить | Enter toggle | Esc назад | ЛКМ клик",
+            hint="",
         )
 
 
@@ -854,7 +1160,13 @@ class PlayState(State):
         self.state = self.STATE_PLAY
         self.dead_time = 0.0
 
-        self._reset_needed = True
+        self.lives = 3
+        self.spawn_point: Tuple[float, float] = (2.5, 2.5)
+        self.door_pos: Tuple[float, float] = (0.0, 0.0)
+        self.zachetka_pos: Tuple[float, float] = (0.0, 0.0)
+        self.zachetka_collected = False
+        self.door_open = False
+        self.initialized = False
 
     def on_enter(self, app: "App") -> None:
         pygame.event.set_grab(True)
@@ -862,14 +1174,27 @@ class PlayState(State):
         pygame.mouse.get_rel()
         app.audio.stop_menu_music()
         app.audio.start_drone()
-        self.reset(app)
+        if not self.initialized:
+            self.start_new_run(app)
+            self.initialized = True
 
     def on_exit(self, app: "App") -> None:
         pygame.event.set_grab(False)
         pygame.mouse.set_visible(True)
+        app.audio.stop_drone()
 
-    def reset(self, app: "App") -> None:
-        self.player.x, self.player.y = app.find_empty_cell(self.world, (2, 2))
+    def start_new_run(self, app: "App") -> None:
+        self.world = World()
+        self.spawn_point = app.find_empty_cell(self.world, (2, 2))
+        self.door_pos = app.find_empty_cell(self.world, (self.world.w - 3, self.world.h - 3))
+        self.zachetka_pos = app.find_empty_cell(self.world, (self.world.w // 2, self.world.h // 2))
+        self.lives = 3
+        self.zachetka_collected = False
+        self.door_open = False
+        self._respawn(app, reset_zachetka=False)
+
+    def _respawn(self, app: "App", reset_zachetka: bool = False) -> None:
+        self.player.x, self.player.y = self.spawn_point
         self.player.dirx, self.player.diry = 1.0, 0.0
         self.player.planex, self.player.planey = 0.0, C.FOV_PLANE
 
@@ -879,64 +1204,63 @@ class PlayState(State):
         self.monster.target = None
         self.monster.tunnel_dist_cells = 999
 
+        if reset_zachetka:
+            self.zachetka_collected = False
+            self.door_open = False
+
         self.state = self.STATE_PLAY
         self.dead_time = 0.0
 
         app.audio.stop_scream()
-        app.audio.set_game_drone_dynamic(0.1)
-
-
+        app.audio.set_game_drone_dynamic(0.25)
+        app.audio.start_drone()
         pygame.mouse.get_rel()
 
     def handle_event(self, app: "App", event: pygame.event.Event) -> None:
-        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            mx, my = event.pos
-            for i, r in enumerate(self.item_rects):
-                if r.collidepoint(mx, my):
-                    self.sel = i
-                    # Клик по Back
-                if self.sel == 5:
-                    app.change_state(MenuState())
-                else:
-                    # для toggle пунктов можно сделать как Enter
-                    self._toggle(app)
-                return
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                app.change_state(PauseState(self))
+            elif event.key == pygame.K_r:
+                self.start_new_run(app)
 
-            if event.type != pygame.KEYDOWN:
-                return
+    def _handle_pickups(self, app: "App") -> None:
+        if not self.zachetka_collected:
+            if math.hypot(self.player.x - self.zachetka_pos[0], self.player.y - self.zachetka_pos[1]) < 0.6:
+                self.zachetka_collected = True
+                self.door_open = True
+                app.audio.play_pickup()
 
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    app.change_state(MenuState())
-                elif event.key == pygame.K_r:
-                    self.reset(app)
+        if self.door_open:
+            if math.hypot(self.player.x - self.door_pos[0], self.player.y - self.door_pos[1]) < 0.75:
+                app.change_state(VictoryState())
+
+    def lose_life(self, app: "App") -> None:
+        self.lives -= 1
+        app.audio.play_scream()
+        if self.lives <= 0:
+            app.change_state(GameOverState())
+            return
+        self._respawn(app)
 
     def update(self, app: "App", dt: float, t: float) -> None:
         keys = pygame.key.get_pressed()
 
-        # mouse rotate
         mx, _ = pygame.mouse.get_rel()
-        if app.cfg.invert_mouse_x:
-            ang_mouse = +mx * C.MOUSE_SENS
-        else:
-            ang_mouse = -mx * C.MOUSE_SENS
+        rot_dir = -1.0 if app.cfg.invert_mouse_x else 1.0
+        ang_mouse = rot_dir * mx * C.MOUSE_SENS
 
         if abs(ang_mouse) > 1e-9:
             self.player.rotate(ang_mouse)
 
-
-        # arrows rotate (optional)
         if keys[pygame.K_LEFT] or keys[pygame.K_RIGHT]:
-            angk = C.ROT_SPEED_KEYS * dt
+            angk = C.ROT_SPEED_KEYS * dt * rot_dir
             angk = +angk if keys[pygame.K_LEFT] else -angk
             self.player.rotate(angk)
 
         if self.state != self.STATE_PLAY:
-            app.audio.set_game_drone_dynamic(0.06)
+            app.audio.set_game_drone_dynamic(0.10)
             return
 
-
-        # movement
         speed = C.MOVE_SPEED * (C.RUN_MULT if (keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]) else 1.0)
 
         moveX = moveY = 0.0
@@ -960,12 +1284,12 @@ class PlayState(State):
         if not self.world.is_wall_cell(int(self.player.x), int(ny)):
             self.player.y = ny
 
-        # monster logic
+        self._handle_pickups(app)
+
         if t < self.monster.active_time:
-            app.audio.set_game_drone_dynamic(0.10)
+            app.audio.set_game_drone_dynamic(0.25)
             return
 
-        # tunnel replan
         if t >= self.monster.next_replan:
             self.monster.next_replan = t + C.REPLAN_INTERVAL
 
@@ -982,17 +1306,14 @@ class PlayState(State):
             else:
                 self.monster.target = (self.player.x, self.player.y)
 
-        # drone volume by tunnel distance
         if self.monster.tunnel_dist_cells >= 999:
-            app.audio.set_game_drone_dynamic(0.06)
+            app.audio.set_game_drone_dynamic(0.12)
         else:
             v = 1.0 - (self.monster.tunnel_dist_cells / C.SOUND_AUDIBLE_CELLS)
             v = clamp(v, 0.0, 1.0)
             v = v ** C.SOUND_CURVE
-            app.audio.set_game_drone_dynamic(0.06 + 0.94 * v)
+            app.audio.set_game_drone_dynamic(0.12 + 0.88 * v)
 
-
-        # move monster toward target
         if self.monster.target is None:
             self.monster.target = (self.player.x, self.player.y)
 
@@ -1001,7 +1322,7 @@ class PlayState(State):
         mdy = ty - self.monster.y
         md = math.hypot(mdx, mdy) + 1e-9
 
-        step = (C.MOVE_SPEED * C.RUN_MULT) * dt  # скорость "как человек с shift"
+        step = (C.MOVE_SPEED * C.RUN_MULT) * dt
         mx_try = self.monster.x + (mdx / md) * step
         my_try = self.monster.y + (mdy / md) * step
 
@@ -1013,17 +1334,205 @@ class PlayState(State):
         if math.hypot(self.monster.x - tx, self.monster.y - ty) < 0.18:
             self.monster.target = None
 
-        # kill
         if math.hypot(self.player.x - self.monster.x, self.player.y - self.monster.y) < C.KILL_DIST:
             self.state = self.STATE_DEAD
             self.dead_time = t
-            app.audio.play_scream()
+            self.lose_life(app)
+
+    def serialize(self) -> Dict[str, Any]:
+        return {
+            "state": "play",
+            "player": {
+                "x": self.player.x,
+                "y": self.player.y,
+                "dirx": self.player.dirx,
+                "diry": self.player.diry,
+                "planex": self.player.planex,
+                "planey": self.player.planey,
+            },
+            "monster": {
+                "x": self.monster.x,
+                "y": self.monster.y,
+                "active_time": self.monster.active_time,
+                "next_replan": self.monster.next_replan,
+                "tunnel_dist_cells": self.monster.tunnel_dist_cells,
+            },
+            "lives": self.lives,
+            "spawn_point": self.spawn_point,
+            "zachetka_pos": self.zachetka_pos,
+            "door_pos": self.door_pos,
+            "zachetka_collected": self.zachetka_collected,
+            "door_open": self.door_open,
+        }
+
+    def load_from_data(self, data: Dict[str, Any]) -> None:
+        p = data.get("player", {})
+        self.player = Player(
+            x=float(p.get("x", self.player.x)),
+            y=float(p.get("y", self.player.y)),
+            dirx=float(p.get("dirx", self.player.dirx)),
+            diry=float(p.get("diry", self.player.diry)),
+            planex=float(p.get("planex", self.player.planex)),
+            planey=float(p.get("planey", self.player.planey)),
+        )
+        m = data.get("monster", {})
+        self.monster = Monster(
+            x=float(m.get("x", self.monster.x)),
+            y=float(m.get("y", self.monster.y)),
+            active_time=float(m.get("active_time", pygame.time.get_ticks() / 1000.0)),
+            next_replan=float(m.get("next_replan", 0.0)),
+            target=None,
+            tunnel_dist_cells=int(m.get("tunnel_dist_cells", 999)),
+        )
+        self.lives = int(data.get("lives", self.lives))
+        self.spawn_point = tuple(data.get("spawn_point", self.spawn_point))  # type: ignore
+        self.zachetka_pos = tuple(data.get("zachetka_pos", self.zachetka_pos))  # type: ignore
+        self.door_pos = tuple(data.get("door_pos", self.door_pos))  # type: ignore
+        self.zachetka_collected = bool(data.get("zachetka_collected", self.zachetka_collected))
+        self.door_open = bool(data.get("door_open", self.door_open or self.zachetka_collected))
+        self.state = self.STATE_PLAY
 
     def draw(self, app: "App") -> None:
         t = pygame.time.get_ticks() / 1000.0
         show_monster = t >= self.monster.active_time
         is_dead = (self.state == self.STATE_DEAD)
-        app.renderer.draw_play(self.world, self.player, self.monster, show_monster, is_dead)
+        app.renderer.draw_play(
+            self.world,
+            self.player,
+            self.monster,
+            show_monster,
+            is_dead,
+            door_pos=self.door_pos,
+            door_open=self.door_open,
+            zachetka_pos=self.zachetka_pos,
+            lives=self.lives,
+            zachetka_collected=self.zachetka_collected,
+        )
+
+
+class PauseState(State):
+    def __init__(self, play_state: PlayState) -> None:
+        self.play_state = play_state
+        self.items = ["Resume", "Save", "Load", "Exit to menu"]
+        self.sel = 0
+        self.item_rects: List[pygame.Rect] = []
+        self.notice: str = ""
+
+    def on_enter(self, app: "App") -> None:
+        pygame.event.set_grab(False)
+        pygame.mouse.set_visible(True)
+        app.audio.stop_drone()
+        app.audio.stop_menu_music()
+
+    def on_exit(self, app: "App") -> None:
+        self.notice = ""
+
+    def _set_selected(self, app: "App", idx: int) -> None:
+        if idx != self.sel:
+            self.sel = idx
+            app.audio.play_ui_hover()
+
+    def _activate(self, app: "App") -> None:
+        app.audio.play_ui_click()
+        if self.sel == 0:
+            app.change_state(self.play_state)
+            app.audio.start_drone()
+        elif self.sel == 1:
+            app.save_game(self.play_state.serialize())
+            self.notice = "Saved"
+        elif self.sel == 2:
+            data = app.load_game()
+            if data:
+                self.play_state.load_from_data(data)
+                app.change_state(self.play_state)
+                app.audio.start_drone()
+                return
+            else:
+                self.notice = "No save"
+        elif self.sel == 3:
+            app.change_state(MenuState())
+
+    def handle_event(self, app: "App", event: pygame.event.Event) -> None:
+        if event.type == pygame.MOUSEMOTION:
+            mx, my = event.pos
+            for i, r in enumerate(self.item_rects):
+                if r.collidepoint(mx, my):
+                    self._set_selected(app, i)
+                    break
+
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            mx, my = event.pos
+            for i, r in enumerate(self.item_rects):
+                if r.collidepoint(mx, my):
+                    self._set_selected(app, i)
+                    self._activate(app)
+                    return
+
+        if event.type != pygame.KEYDOWN:
+            return
+        if event.key in (pygame.K_UP, pygame.K_w):
+            self._set_selected(app, (self.sel - 1) % len(self.items))
+        elif event.key in (pygame.K_DOWN, pygame.K_s):
+            self._set_selected(app, (self.sel + 1) % len(self.items))
+        elif event.key == pygame.K_RETURN:
+            self._activate(app)
+        elif event.key == pygame.K_ESCAPE:
+            app.change_state(self.play_state)
+            app.audio.start_drone()
+
+    def update(self, app: "App", dt: float, t: float) -> None:
+        pass
+
+    def draw(self, app: "App") -> None:
+        items = self.items.copy()
+        if self.notice:
+            items.append(self.notice)
+        self.item_rects = app.renderer.draw_menu(
+            title="Paused",
+            items=items,
+            selected=self.sel,
+            hint="",
+        )
+
+
+class VictoryState(State):
+    def on_enter(self, app: "App") -> None:
+        pygame.event.set_grab(False)
+        pygame.mouse.set_visible(True)
+        app.audio.stop_drone()
+        app.audio.play_victory()
+
+    def handle_event(self, app: "App", event: pygame.event.Event) -> None:
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_RETURN:
+            app.change_state(MenuState())
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            app.change_state(MenuState())
+
+    def update(self, app: "App", dt: float, t: float) -> None:
+        pass
+
+    def draw(self, app: "App") -> None:
+        app.renderer.draw_fullscreen_image(app.victory_img, "ESCAPE FROM FAMCS")
+
+
+class GameOverState(State):
+    def on_enter(self, app: "App") -> None:
+        pygame.event.set_grab(False)
+        pygame.mouse.set_visible(True)
+        app.audio.stop_drone()
+        app.audio.play_end()
+
+    def handle_event(self, app: "App", event: pygame.event.Event) -> None:
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_RETURN:
+            app.change_state(MenuState())
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            app.change_state(MenuState())
+
+    def update(self, app: "App", dt: float, t: float) -> None:
+        pass
+
+    def draw(self, app: "App") -> None:
+        app.renderer.draw_fullscreen_image(app.end_img, "You failed")
 
 
 # ============================================================
@@ -1045,13 +1554,27 @@ class App:
         # Assets
         self.wall_tex = make_backrooms_wall_texture(C.TEXTURE_SIZE)
         self.monster_img = self._load_monster()
+        self.heart_img = self._load_image_alpha(C.HEART_IMG)
+        self.zachet_img = self._load_image_alpha(C.ZACHET_IMG)
+        self.door_img = self._load_image_alpha(C.DOOR_IMG)
+        self.victory_img = self._load_image(C.VICTORY_IMG)
+        self.end_img = self._load_image(C.END_IMG)
 
         # Subsystems
         self.audio = AudioSystem()
         self.audio.init()
         self.audio.apply_volumes(self.cfg.music_volume, self.cfg.sfx_volume)
 
-        self.renderer = Renderer(self.screen, self.wall_tex, self.monster_img)
+        self.renderer = Renderer(
+            self.screen,
+            self.wall_tex,
+            self.monster_img,
+            self.heart_img,
+            self.zachet_img,
+            self.door_img,
+            self.victory_img,
+            self.end_img,
+        )
 
         # State machine
         self.state: State = MenuState()
@@ -1075,6 +1598,9 @@ class App:
 
     def _config_path(self) -> str:
         return os.path.join(self._config_dir(), "settings.json")
+
+    def _savegame_path(self) -> str:
+        return os.path.join(self._config_dir(), "savegame.json")
 
     def load_config(self) -> None:
         path = self._config_path()
@@ -1117,6 +1643,28 @@ class App:
         except Exception:
             return
 
+    def save_game(self, data: Dict[str, Any]) -> None:
+        path = self._savegame_path()
+        try:
+            import json
+
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            return
+
+    def load_game(self) -> Optional[Dict[str, Any]]:
+        path = self._savegame_path()
+        if not os.path.exists(path):
+            return None
+        try:
+            import json
+
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return None
+
 
     def _load_monster(self) -> pygame.Surface:
         path = resource_path(C.MONSTER_FILE)
@@ -1125,6 +1673,18 @@ class App:
         img = pygame.image.load(path).convert()
         img = pygame.transform.smoothscale(img, (C.TEXTURE_SIZE, C.TEXTURE_SIZE))
         return img
+
+    def _load_image(self, fname: str) -> pygame.Surface:
+        path = resource_path(fname)
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Не найден '{fname}'. Ожидается по пути:\n{path}")
+        return pygame.image.load(path).convert()
+
+    def _load_image_alpha(self, fname: str) -> pygame.Surface:
+        path = resource_path(fname)
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Не найден '{fname}'. Ожидается по пути:\n{path}")
+        return pygame.image.load(path).convert_alpha()
 
     @staticmethod
     def find_empty_cell(world: World, prefer: Tuple[int, int]) -> Tuple[float, float]:
@@ -1164,11 +1724,11 @@ class App:
 
 if __name__ == "__main__":
     # Packaging notes:
-    # Windows:
-    # pyinstaller --noconfirm --onefile --windowed --name TrushHORROR ^
-    #   --add-data "trush.jpg;." --add-data "scream.mp3;." horror_game.py
+    # Windows (one folder to keep assets in img/ and audio/):
+    # pyinstaller --noconfirm --windowed --name "ESCAPE FROM FAMCS" ^
+    #   --add-data "img;img" --add-data "audio;audio" EscapeFromFAMCS.py
     #
     # macOS:
-    # pyinstaller --noconfirm --windowed --name TrushHORROR \
-    #   --add-data "trush.jpg:." --add-data "scream.mp3:." horror_game.py
+    # pyinstaller --noconfirm --windowed --name "ESCAPE FROM FAMCS" \
+    #   --add-data "img:img" --add-data "audio:audio" EscapeFromFAMCS.py
     App().run()
