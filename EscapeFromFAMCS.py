@@ -126,7 +126,7 @@ class MapSpec:
     wrap_portals: Tuple[Tuple[str, float, float], ...] = tuple()
 
 
-MAP_VARIANTS: Tuple[MapSpec, ...] = (
+BASE_MAP_VARIANTS: Tuple[MapSpec, ...] = (
     MapSpec(
         grid=[
             "111111111111111",
@@ -235,6 +235,29 @@ MAP_VARIANTS: Tuple[MapSpec, ...] = (
         ],
     ),
 )
+
+
+def _scale_map_spec(spec: MapSpec, s: int) -> MapSpec:
+    new_grid: List[str] = []
+    for row in spec.grid:
+        row2 = "".join(ch * s for ch in row)
+        for _ in range(s):
+            new_grid.append(row2)
+
+    new_portals = tuple((d, a * s, b * s) for (d, a, b) in spec.wrap_portals)
+    return MapSpec(grid=new_grid, wrap_portals=new_portals)
+
+
+def _ensure_min_size(spec: MapSpec, min_size: int = 40) -> MapSpec:
+    h = len(spec.grid)
+    w = len(spec.grid[0]) if h else 0
+    if w <= 0 or h <= 0:
+        return spec
+    s = max(1, math.ceil(min_size / w), math.ceil(min_size / h))
+    return _scale_map_spec(spec, s)
+
+
+MAP_VARIANTS: Tuple[MapSpec, ...] = tuple(_ensure_min_size(m, 40) for m in BASE_MAP_VARIANTS)
 
 # ============================================================
 # 2) World (Map + collision)
@@ -782,6 +805,7 @@ class Renderer:
         show_monster: bool,
         is_dead: bool,
         door_pos: Optional[Tuple[float, float]] = None,
+        door_plane_pos: Optional[Tuple[float, float]] = None,
         door_orientation: str = "vertical",
         door_open: bool = False,
         zachetki: List[Tuple[float, float]] = [],
@@ -805,8 +829,11 @@ class Renderer:
             if not collected:
                 self._draw_billboard(zbuffer, player, pos, self.zachet_img, dim=False, scale=1.0)
 
-        if door_pos is not None and not door_open:
-            self._draw_door_plane(zbuffer, player, door_pos, door_orientation, dim=True)
+        if door_plane_pos is None:
+            door_plane_pos = door_pos
+
+        if door_plane_pos is not None:
+            self._draw_door_plane(zbuffer, player, door_plane_pos, door_orientation, dim=True)
 
 
         # upscale to screen
@@ -860,8 +887,8 @@ class Renderer:
         door_pos: Optional[Tuple[float, float]],
         zachetki: List[Tuple[float, float]],
     ) -> None:
-        map_w = 200
-        cell = max(4, map_w // max(world.w, 1))
+        target = 220
+        cell = max(1, min(target // max(world.w, 1), target // max(world.h, 1)))
         map_w = cell * world.w
         map_h = cell * world.h
 
@@ -1014,7 +1041,8 @@ class Renderer:
             hit = False
             side = 0
             cell_type = "1"
-            for _ in range(128):
+            max_steps = max(world.w, world.h) * 2
+            for _ in range(max_steps):
                 if sideDistX < sideDistY:
                     sideDistX += deltaDistX
                     mapX += stepX
@@ -1086,7 +1114,7 @@ class Renderer:
     ) -> None:
         tex_w, tex_h = self.door_tex.get_size()
         door_x, door_y = door_pos
-        half = 0.48
+        half = 0.5
         for x in range(C.RENDER_W):
             cameraX = 2.0 * x / C.RENDER_W - 1.0
             rayDirX = p.dirx + p.planex * cameraX
@@ -1479,7 +1507,9 @@ class PlayState(State):
 
         self.lives = 3
         self.spawn_point: Tuple[float, float] = (2.5, 2.5)
-        self.door_pos: Tuple[float, float] = (0.0, 0.0)
+        self.door_trigger: Tuple[float, float] = (0.0, 0.0)
+        self.door_plane: Tuple[float, float] = (0.0, 0.0)
+        self.door_cell: Tuple[int, int] = (0, 0)
         self.door_orientation: str = "vertical"
         self.zachetki: List[Tuple[float, float]] = []
         self.zachet_collected: List[bool] = []
@@ -1537,18 +1567,24 @@ class PlayState(State):
                 cx, cy = candidates[0]
                 return cx + 0.5, cy + 0.5
 
-            self.door_pos, self.door_orientation = self._pick_door(app, pick_reachable)
-            dx, dy = int(self.door_pos[0]), int(self.door_pos[1])
+            (
+                self.door_trigger,
+                self.door_plane,
+                self.door_cell,
+                self.door_orientation,
+            ) = self._pick_door(app, pick_reachable)
+
+            dx, dy = self.door_cell
             self.world.MAP[dy][dx] = "D"
 
             self.zachetki = []
             for prefer in ((self.world.w // 2, self.world.h // 2), (2, self.world.h - 3), (self.world.w - 3, 2)):
-                self.zachetki.append(pick_reachable(prefer, [self.spawn_point, self.door_pos] + self.zachetki))
+                self.zachetki.append(pick_reachable(prefer, [self.spawn_point, self.door_trigger] + self.zachetki))
 
             sanity_map = compute_dist_map(
                 self.world, spawn_cell[0], spawn_cell[1], lambda mx, my: self.world.cell_at(mx, my) == "1"
             )
-            targets = [self.door_pos, *self.zachetki]
+            targets = [self.door_trigger, *self.zachetki]
             if any(sanity_map[int(ty)][int(tx)] == -1 for tx, ty in targets):
                 attempts += 1
                 continue
@@ -1585,7 +1621,7 @@ class PlayState(State):
         min_d = max(6, int(dmax * 0.45))
         min_d = min(min_d, dmax)
 
-        avoid = [self.spawn_point, self.door_pos] + self.zachetki
+        avoid = [self.spawn_point, self.door_trigger] + self.zachetki
         taken = set()
 
         def far_ok(x: int, y: int) -> bool:
@@ -1626,7 +1662,7 @@ class PlayState(State):
         if reset_zachetka:
             self.zachet_collected = [False] * len(self.zachet_collected)
             self.door_open = False
-            dx, dy = int(self.door_pos[0]), int(self.door_pos[1])
+            dx, dy = self.door_cell
             if 0 <= dx < self.world.w and 0 <= dy < self.world.h:
                 self.world.MAP[dy][dx] = "D"
 
@@ -1642,31 +1678,54 @@ class PlayState(State):
         self,
         app: "App",
         pick_unique: Any,
-    ) -> Tuple[Tuple[float, float], str]:
+    ) -> Tuple[Tuple[float, float], Tuple[float, float], Tuple[int, int], str]:
         tries = 0
-        while tries < 200:
-            pos = pick_unique((self.world.w - 3, self.world.h - 3), [self.spawn_point])
-            mx, my = int(pos[0]), int(pos[1])
+        while tries < 250:
+            # берём ДОСТИЖИМУЮ пустую клетку (рядом с ней и будет дверь)
+            trigger = pick_unique((self.world.w - 3, self.world.h - 3), [self.spawn_point])
+            mx, my = int(trigger[0]), int(trigger[1])
+
             if self.world.is_wall_cell(mx, my):
                 tries += 1
                 continue
-            neighbors = [
-                (-1, 0, "vertical"),
-                (1, 0, "vertical"),
-                (0, -1, "horizontal"),
-                (0, 1, "horizontal"),
+
+            # ищем соседнюю стену — в неё и встраиваем дверь
+            # (door_cell = бывшая "1", которую заменим на "D")
+            candidates = [
+                (-1, 0, "vertical"),   # стена слева -> плоскость x = mx
+                (1, 0, "vertical"),    # стена справа -> плоскость x = mx + 1
+                (0, -1, "horizontal"),  # стена сверху -> плоскость y = my
+                (0, 1, "horizontal"),   # стена снизу -> плоскость y = my + 1
             ]
-            orientation = "vertical"
-            found = False
-            for dx, dy, ori in neighbors:
-                if self.world.is_wall_cell(mx + dx, my + dy):
-                    orientation = ori
-                    found = True
-                    break
-            if found:
-                return pos, orientation
+            random.shuffle(candidates)
+
+            for dx, dy, ori in candidates:
+                wx, wy = mx + dx, my + dy
+                if self.world.is_wall_cell(wx, wy):
+                    # триггер = центр пустой клетки
+                    door_trigger = (mx + 0.5, my + 0.5)
+
+                    # плоскость двери ровно на границе со стеной (не выступает)
+                    if ori == "vertical":
+                        plane_x = float(mx) if dx == -1 else float(mx + 1)
+                        plane_y = my + 0.5
+                        door_plane = (plane_x, plane_y)
+                    else:
+                        plane_y = float(my) if dy == -1 else float(my + 1)
+                        plane_x = mx + 0.5
+                        door_plane = (plane_x, plane_y)
+
+                    door_cell = (wx, wy)  # клетка стены, которую заменим на 'D'
+                    return door_trigger, door_plane, door_cell, ori
+
             tries += 1
-        return pick_unique((self.world.w - 3, self.world.h - 3), [self.spawn_point]), "vertical"
+
+        # fallback: как получится
+        mx, my = 2, 2
+        door_trigger = (mx + 0.5, my + 0.5)
+        door_plane = (mx + 1.0, my + 0.5)
+        door_cell = (mx + 1, my)
+        return door_trigger, door_plane, door_cell, "vertical"
 
     def handle_event(self, app: "App", event: pygame.event.Event) -> None:
         if event.type == pygame.KEYDOWN:
@@ -1687,12 +1746,7 @@ class PlayState(State):
         self.door_open = all(self.zachet_collected)
 
         if self.door_open:
-            dx, dy = int(self.door_pos[0]), int(self.door_pos[1])
-            if self.world.cell_at(dx, dy) == "D":
-                self.world.MAP[dy][dx] = "0"
-
-        if self.door_open:
-            if math.hypot(self.player.x - self.door_pos[0], self.player.y - self.door_pos[1]) < 0.85:
+            if math.hypot(self.player.x - self.door_trigger[0], self.player.y - self.door_trigger[1]) < 0.85:
                 app.change_state(VictoryState())
 
     def lose_life(self, app: "App") -> None:
@@ -1838,7 +1892,10 @@ class PlayState(State):
             "lives": self.lives,
             "spawn_point": self.spawn_point,
             "zachetki": self.zachetki,
-            "door_pos": self.door_pos,
+            "door_pos": self.door_trigger,
+            "door_trigger": self.door_trigger,
+            "door_plane": self.door_plane,
+            "door_cell": self.door_cell,
             "door_orientation": self.door_orientation,
             "zachet_collected": self.zachet_collected,
             "door_open": self.door_open,
@@ -1875,15 +1932,20 @@ class PlayState(State):
         self.lives = int(data.get("lives", self.lives))
         self.spawn_point = tuple(data.get("spawn_point", self.spawn_point))  # type: ignore
         self.zachetki = [tuple(z) for z in data.get("zachetki", self.zachetki)]  # type: ignore
-        self.door_pos = tuple(data.get("door_pos", self.door_pos))  # type: ignore
+        self.door_trigger = tuple(  # type: ignore
+            data.get("door_trigger", data.get("door_pos", self.door_trigger))
+        )
+        self.door_plane = tuple(data.get("door_plane", self.door_plane))  # type: ignore
+        door_cell_raw = data.get("door_cell", self.door_cell)
+        self.door_cell = (int(door_cell_raw[0]), int(door_cell_raw[1])) if door_cell_raw else self.door_cell
         self.door_orientation = str(data.get("door_orientation", self.door_orientation))
         self.zachet_collected = [bool(z) for z in data.get("zachet_collected", self.zachet_collected)]
         if not self.zachet_collected:
             self.zachet_collected = [False] * len(self.zachetki)
         self.door_open = bool(data.get("door_open", self.door_open or all(self.zachet_collected)))
         if not self.door_open:
-            dx, dy = int(self.door_pos[0]), int(self.door_pos[1])
-            if 0 <= dx < self.world.w and 0 <= dy < self.world.h and not self.world.is_wall_cell(dx, dy):
+            dx, dy = self.door_cell
+            if 0 <= dx < self.world.w and 0 <= dy < self.world.h:
                 self.world.MAP[dy][dx] = "D"
         self.monster_count = max(1, len(self.monsters))
         self.state = self.STATE_PLAY
@@ -1898,7 +1960,8 @@ class PlayState(State):
             self.monsters,
             show_monster,
             is_dead,
-            door_pos=self.door_pos,
+            door_pos=self.door_trigger,
+            door_plane_pos=self.door_plane,
             door_orientation=self.door_orientation,
             door_open=self.door_open,
             zachetki=self.zachetki,
