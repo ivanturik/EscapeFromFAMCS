@@ -327,6 +327,42 @@ class AudioSystem:
             self.ui_hover_sound.set_volume(self.sfx_volume)
         if self.ui_click_sound is not None:
             self.ui_click_sound.set_volume(self.sfx_volume)
+        if self.pickup_sound is not None:
+            self.pickup_sound.set_volume(self.sfx_volume)
+        if self.victory_sound is not None:
+            self.victory_sound.set_volume(self.sfx_volume)
+        if self.end_sound is not None:
+            self.end_sound.set_volume(self.sfx_volume)
+
+    def play_ui_hover(self) -> None:
+        self._play_sfx(self.ui_hover_sound)
+
+    def play_ui_click(self) -> None:
+        self._play_sfx(self.ui_click_sound)
+
+    def play_pickup(self) -> None:
+        self._play_sfx(self.pickup_sound)
+
+    def play_victory(self) -> None:
+        self._play_sfx(self.victory_sound)
+
+    def play_end(self) -> None:
+        self._play_sfx(self.end_sound)
+
+    def _play_sfx(self, snd: Optional[pygame.mixer.Sound]) -> None:
+        if not self.enabled or snd is None:
+            return
+        try:
+            snd.set_volume(self.sfx_volume)
+            snd.play()
+        except Exception:
+            return
+
+        # ui
+        if self.ui_hover_sound is not None:
+            self.ui_hover_sound.set_volume(self.sfx_volume)
+        if self.ui_click_sound is not None:
+            self.ui_click_sound.set_volume(self.sfx_volume)
 
     def play_ui_hover(self) -> None:
         self._play_sfx(self.ui_hover_sound)
@@ -617,6 +653,7 @@ class Renderer:
         zachetka_pos: Optional[Tuple[float, float]] = None,
         lives: int = 3,
         zachetka_collected: bool = False,
+        show_minimap: bool = False,
     ) -> None:
         self.render.fill(C.CEIL_COLOR)
         pygame.draw.rect(self.render, C.FLOOR_COLOR, (0, C.RENDER_H // 2, C.RENDER_W, C.RENDER_H // 2))
@@ -626,6 +663,11 @@ class Renderer:
 
         if show_monster and not is_dead:
             self._draw_sprite(zbuffer, player, (monster.x, monster.y))
+
+        if zachetka_pos is not None and not zachetka_collected:
+            self._draw_billboard(zbuffer, player, zachetka_pos, self.zachet_img)
+        if door_pos is not None:
+            self._draw_billboard(zbuffer, player, door_pos, self.door_img, dim=not door_open, scale=1.6)
 
         if zachetka_pos is not None and not zachetka_collected:
             self._draw_billboard(zbuffer, player, zachetka_pos, self.zachet_img)
@@ -663,6 +705,54 @@ class Renderer:
         if zachetka_collected:
             icon = pygame.transform.smoothscale(self.zachet_img, (34, 34))
             self.screen.blit(icon, (12, 50))
+
+        if show_minimap:
+            self._draw_minimap(world, player, door_pos, zachetka_pos if not zachetka_collected else None)
+
+    def _draw_minimap(
+        self,
+        world: World,
+        player: Player,
+        door_pos: Optional[Tuple[float, float]],
+        zachetka_pos: Optional[Tuple[float, float]],
+    ) -> None:
+        map_w = 200
+        cell = max(4, map_w // max(world.w, 1))
+        map_w = cell * world.w
+        map_h = cell * world.h
+
+        surf = pygame.Surface((map_w, map_h), pygame.SRCALPHA)
+        surf.fill((0, 0, 0, 110))
+
+        for y in range(world.h):
+            for x in range(world.w):
+                if world.is_wall_cell(x, y):
+                    pygame.draw.rect(surf, (35, 35, 35, 230), (x * cell, y * cell, cell, cell))
+
+        if door_pos is not None:
+            dx = int(door_pos[0] * cell)
+            dy = int(door_pos[1] * cell)
+            pygame.draw.circle(surf, (40, 140, 255, 240), (dx, dy), max(2, cell // 2))
+
+        if zachetka_pos is not None:
+            zx = int(zachetka_pos[0] * cell)
+            zy = int(zachetka_pos[1] * cell)
+            pygame.draw.circle(surf, (250, 200, 70, 240), (zx, zy), max(2, cell // 2))
+
+        px = int(player.x * cell)
+        py = int(player.y * cell)
+        pygame.draw.circle(surf, (255, 80, 80, 255), (px, py), max(2, cell // 2))
+        dir_len = max(cell, 6)
+        pygame.draw.line(
+            surf,
+            (255, 200, 200, 255),
+            (px, py),
+            (int(px + player.dirx * dir_len), int(py + player.diry * dir_len)),
+            2,
+        )
+
+        w, _ = self.screen.get_size()
+        self.screen.blit(surf, (w - map_w - 12, 12))
 
     @staticmethod
     def _text_with_outlines(
@@ -739,6 +829,14 @@ class Renderer:
             self.screen.blit(hh, (w // 2 - hh.get_width() // 2, int(h * 0.88)))
 
         return rects
+
+    def draw_fullscreen_image(self, img: pygame.Surface, caption: str = "") -> None:
+        w, h = self.screen.get_size()
+        scaled = pygame.transform.scale(img, (w, h))
+        self.screen.blit(scaled, (0, 0))
+        if caption:
+            txt = self.big_font.render(caption, True, (240, 240, 240))
+            self.screen.blit(txt, (w // 2 - txt.get_width() // 2, int(h * 0.82)))
 
     def draw_fullscreen_image(self, img: pygame.Surface, caption: str = "") -> None:
         w, h = self.screen.get_size()
@@ -879,6 +977,61 @@ class Renderer:
         tex_scaled.fill((mul, mul, mul), special_flags=pygame.BLEND_MULT)
 
         # clip X
+        clip_sx = max(0, start_x)
+        clip_ex = min(C.RENDER_W, end_x)
+
+        for stripe in range(clip_sx, clip_ex):
+            if transformY >= zbuffer[stripe]:
+                continue
+            tx = stripe - start_x
+            if 0 <= tx < sprite_w:
+                col = tex_scaled.subsurface((tx, offset_y, 1, vis_h))
+                self.render.blit(col, (stripe, clip_sy))
+
+    def _draw_billboard(
+        self,
+        zbuffer: List[float],
+        p: Player,
+        spr_pos: Tuple[float, float],
+        tex: pygame.Surface,
+        dim: bool = False,
+        scale: float = 1.0,
+    ) -> None:
+        sprX = spr_pos[0] - p.x
+        sprY = spr_pos[1] - p.y
+
+        inv_det = 1.0 / (p.planex * p.diry - p.dirx * p.planey + 1e-9)
+        transformX = inv_det * (p.diry * sprX - p.dirx * sprY)
+        transformY = inv_det * (-p.planey * sprX + p.planex * sprY)
+
+        if transformY <= 0.06:
+            return
+
+        screen_x = int((C.RENDER_W / 2) * (1 + transformX / transformY))
+
+        sprite_h = int(abs(C.RENDER_H / transformY) * scale)
+        sprite_h = int(clamp(sprite_h, 6, C.RENDER_H * 2))
+        sprite_w = sprite_h
+
+        start_y = -sprite_h // 2 + C.RENDER_H // 2
+        end_y = start_y + sprite_h
+        start_x = -sprite_w // 2 + screen_x
+        end_x = start_x + sprite_w
+
+        clip_sy = max(0, start_y)
+        clip_ey = min(C.RENDER_H, end_y)
+        if clip_ey <= clip_sy:
+            return
+        offset_y = clip_sy - start_y
+        vis_h = clip_ey - clip_sy
+
+        tex_scaled = pygame.transform.smoothscale(tex, (sprite_w, sprite_h))
+        fog_factor = math.exp(-C.FOG_STRENGTH * transformY * 22.0)
+        mul = int(255 * fog_factor)
+        mul = int(clamp(mul, 80 if dim else 120, 255))
+        tex_scaled = tex_scaled.copy()
+        tex_scaled.fill((mul, mul, mul), special_flags=pygame.BLEND_MULT)
+
         clip_sx = max(0, start_x)
         clip_ex = min(C.RENDER_W, end_x)
 
@@ -1207,8 +1360,22 @@ class PlayState(State):
     def start_new_run(self, app: "App") -> None:
         self.world = World()
         self.spawn_point = app.find_empty_cell(self.world, (2, 2))
-        self.door_pos = app.find_empty_cell(self.world, (self.world.w - 3, self.world.h - 3))
-        self.zachetka_pos = app.find_empty_cell(self.world, (self.world.w // 2, self.world.h // 2))
+
+        def pick_unique(prefer: Tuple[int, int], avoid: List[Tuple[float, float]]) -> Tuple[float, float]:
+            pos = app.find_empty_cell(self.world, prefer)
+            tries = 0
+            while tries < 200:
+                if all(math.hypot(pos[0] - ax, pos[1] - ay) > 2.0 for ax, ay in avoid):
+                    break
+                rx = random.randint(1, self.world.w - 2)
+                ry = random.randint(1, self.world.h - 2)
+                if not self.world.is_wall_cell(rx, ry):
+                    pos = (rx + 0.5, ry + 0.5)
+                tries += 1
+            return pos
+
+        self.door_pos = pick_unique((self.world.w - 3, self.world.h - 3), [self.spawn_point])
+        self.zachetka_pos = pick_unique((self.world.w // 2, self.world.h // 2), [self.spawn_point, self.door_pos])
         self.lives = 3
         self.zachetka_collected = False
         self.door_open = False
@@ -1243,6 +1410,8 @@ class PlayState(State):
                 app.change_state(PauseState(self))
             elif event.key == pygame.K_r:
                 self.start_new_run(app)
+            elif event.key == pygame.K_m:
+                app.show_minimap = not app.show_minimap
 
     def _handle_pickups(self, app: "App") -> None:
         if not self.zachetka_collected:
@@ -1257,11 +1426,10 @@ class PlayState(State):
 
     def lose_life(self, app: "App") -> None:
         self.lives -= 1
-        app.audio.play_scream()
         if self.lives <= 0:
             app.change_state(GameOverState())
             return
-        self._respawn(app)
+        app.change_state(DeathScreamerState(self))
 
     def update(self, app: "App", dt: float, t: float) -> None:
         keys = pygame.key.get_pressed()
@@ -1356,8 +1524,6 @@ class PlayState(State):
             self.monster.target = None
 
         if math.hypot(self.player.x - self.monster.x, self.player.y - self.monster.y) < C.KILL_DIST:
-            self.state = self.STATE_DEAD
-            self.dead_time = t
             self.lose_life(app)
 
     def serialize(self) -> Dict[str, Any]:
@@ -1428,6 +1594,7 @@ class PlayState(State):
             zachetka_pos=self.zachetka_pos,
             lives=self.lives,
             zachetka_collected=self.zachetka_collected,
+            show_minimap=app.show_minimap,
         )
 
 
@@ -1516,11 +1683,38 @@ class PauseState(State):
         )
 
 
+class DeathScreamerState(State):
+    def __init__(self, play_state: "PlayState", duration: Optional[float] = None) -> None:
+        self.play_state = play_state
+        self.duration = duration if duration is not None else random.uniform(0.8, 1.2)
+        self.start_time = 0.0
+
+    def on_enter(self, app: "App") -> None:
+        pygame.event.set_grab(False)
+        pygame.mouse.set_visible(True)
+        self.start_time = pygame.time.get_ticks() / 1000.0
+        app.audio.stop_drone()
+        app.audio.stop_menu_music()
+        app.audio.play_scream()
+
+    def handle_event(self, app: "App", event: pygame.event.Event) -> None:
+        pass
+
+    def update(self, app: "App", dt: float, t: float) -> None:
+        if (t - self.start_time) >= self.duration:
+            self.play_state._respawn(app)
+            app.change_state(self.play_state)
+
+    def draw(self, app: "App") -> None:
+        app.renderer.draw_fullscreen_image(app.monster_img, "")
+
+
 class VictoryState(State):
     def on_enter(self, app: "App") -> None:
         pygame.event.set_grab(False)
         pygame.mouse.set_visible(True)
         app.audio.stop_drone()
+        app.audio.stop_menu_music()
         app.audio.play_victory()
 
     def handle_event(self, app: "App", event: pygame.event.Event) -> None:
@@ -1541,6 +1735,7 @@ class GameOverState(State):
         pygame.event.set_grab(False)
         pygame.mouse.set_visible(True)
         app.audio.stop_drone()
+        app.audio.stop_menu_music()
         app.audio.play_end()
 
     def handle_event(self, app: "App", event: pygame.event.Event) -> None:
@@ -1565,6 +1760,8 @@ class App:
         pygame.init()
         self.cfg = RuntimeConfig()
         self.load_config()
+
+        self.show_minimap = True
 
         self.screen = self._create_screen()
         pygame.display.set_caption("ESCAPE FROM FAMCS")
@@ -1619,6 +1816,9 @@ class App:
 
     def _config_path(self) -> str:
         return os.path.join(self._config_dir(), "settings.json")
+
+    def _savegame_path(self) -> str:
+        return os.path.join(self._config_dir(), "savegame.json")
 
     def _savegame_path(self) -> str:
         return os.path.join(self._config_dir(), "savegame.json")
@@ -1694,6 +1894,18 @@ class App:
         img = pygame.image.load(path).convert()
         img = pygame.transform.smoothscale(img, (C.TEXTURE_SIZE, C.TEXTURE_SIZE))
         return img
+
+    def _load_image(self, fname: str) -> pygame.Surface:
+        path = resource_path(fname)
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Не найден '{fname}'. Ожидается по пути:\n{path}")
+        return pygame.image.load(path).convert()
+
+    def _load_image_alpha(self, fname: str) -> pygame.Surface:
+        path = resource_path(fname)
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Не найден '{fname}'. Ожидается по пути:\n{path}")
+        return pygame.image.load(path).convert_alpha()
 
     def _load_image(self, fname: str) -> pygame.Surface:
         path = resource_path(fname)
