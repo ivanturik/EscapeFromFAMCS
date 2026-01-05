@@ -116,48 +116,153 @@ class RuntimeConfig:
 
 
 # ============================================================
+# 1.5) Map definitions
+# ============================================================
+
+@dataclass(frozen=True)
+class MapSpec:
+    grid: List[str]
+    wrap_portals: Tuple[Tuple[str, float, float], ...] = tuple()
+
+
+MAP_VARIANTS: Tuple[MapSpec, ...] = (
+    MapSpec(
+        grid=[
+            "111111111111111",
+            "100000000100001",
+            "101111110101101",
+            "101000010101001",
+            "101011010101101",
+            "101010010001001",
+            "101010011101101",
+            "101000000001001",
+            "101111011101101",
+            "100000010000001",
+            "111111111111111",
+        ],
+    ),
+    MapSpec(
+        grid=[
+            "1111111111111111111",
+            "1000000000000100001",
+            "1011111111100101101",
+            "1000000000100100101",
+            "1011110110100100101",
+            "1000010100100000101",
+            "1011010100111111101",
+            "1010010100000000001",
+            "1010010111110111111",
+            "1010010000010100001",
+            "1010011111010101101",
+            "1000010001010100101",
+            "1011110101010100101",
+            "1000000101000000101",
+            "1111111111111111111",
+        ],
+    ),
+    MapSpec(
+        grid=[
+            "11111111111111111111111",
+            "10000000000000000001001",
+            "10111111101111111001001",
+            "10100000101000001001001",
+            "10101110101011101001001",
+            "10101000101000101001001",
+            "10101011101110101001001",
+            "10101010000010101001001",
+            "10101011111010101111001",
+            "10101000001010100000001",
+            "10101111001010101111001",
+            "10100001001010100001001",
+            "10111101001010101101001",
+            "10000001000010100001001",
+            "10111111111110101111001",
+            "10000000000000100001001",
+            "11111111111111111111111",
+        ],
+    ),
+    MapSpec(
+        grid=[
+            "111111111111111111",
+            "100000010000000001",
+            "101111010111110101",
+            "101001010100010101",
+            "101001010100010101",
+            "101001010111010101",
+            "101001010001010101",
+            "101001010001010101",
+            "100001000001000001",
+            "101001011111010101",
+            "101001000000010101",
+            "101001111110010101",
+            "101000000010010101",
+            "101111110010010101",
+            "100000010000010001",
+            "111111111111111111",
+        ],
+        wrap_portals=(("N", 7.5, 10.5), ("S", 7.5, 10.5)),
+    ),
+    MapSpec(
+        grid=[
+            "1111111111111111111111111",
+            "1000000000000000010000001",
+            "1011111111111111010111101",
+            "1010000000000000010100001",
+            "1010111110111111110101111",
+            "1010100010100000010100001",
+            "1010101110101111010111101",
+            "1010101000101000010000101",
+            "1010101011101011110110101",
+            "1010001010001000000100101",
+            "1011111010111011111100101",
+            "1000000010100000000100101",
+            "1111111010111111100100101",
+            "1000000010000000100000001",
+            "1011111111111111111111101",
+            "1000000000000000000000001",
+            "1111111111111111111111111",
+        ],
+    ),
+)
+
+# ============================================================
 # 2) World (Map + collision)
 # ============================================================
 
 class World:
-    MAP: List[str] = [
-        "111111111111111111111111",
-        "100000000000000000000001",
-        "101111011111011111011101",
-        "101000010000010000010001",
-        "101011110111110111110101",
-        "101010000100000100000101",
-        "101010111101111101111101",
-        "101010100001000001000101",
-        "101010101111011111011101",
-        "100010100000010000010001",
-        "111010111110111110111011",
-        "100000100000100000100001",
-        "101111101111101111101111",
-        "101000001000001000001001",
-        "101011111011111011111101",
-        "101010000010000010000001",
-        "101010111110111110111101",
-        "101010100000100000100101",
-        "101010101111101111101101",
-        "100000001000001000000001",
-        "101111111011111011111101",
-        "101000000010000010000001",
-        "100000000000000000000001",
-        "111111111111111111111111",
-    ]
-
-    def __init__(self) -> None:
+    def __init__(self, map_spec: MapSpec) -> None:
+        self.MAP = [list(row) for row in map_spec.grid]
         self.h = len(self.MAP)
         self.w = len(self.MAP[0])
+        self.wrap_portals = list(map_spec.wrap_portals)
+
+    def cell_at(self, mx: int, my: int) -> str:
+        if mx < 0 or mx >= self.w or my < 0 or my >= self.h:
+            return "1"
+        return self.MAP[my][mx]
 
     def is_wall_cell(self, mx: int, my: int) -> bool:
-        if mx < 0 or mx >= self.w or my < 0 or my >= self.h:
-            return True
-        return self.MAP[my][mx] == "1"
+        return self.cell_at(mx, my) == "1"
+
+    def is_blocking_cell(self, mx: int, my: int) -> bool:
+        cell = self.cell_at(mx, my)
+        return cell in ("1", "D")
 
     def is_wall_at(self, x: float, y: float) -> bool:
-        return self.is_wall_cell(int(x), int(y))
+        return self.is_blocking_cell(int(x), int(y))
+
+    def apply_wrap(self, player: "Player") -> None:
+        if not self.wrap_portals:
+            return
+        for direction, span_start, span_end in self.wrap_portals:
+            if direction == "N" and player.y < 0.1 and span_start <= player.x <= span_end:
+                player.y += max(self.h - 2.0, 1.0)
+            elif direction == "S" and player.y > (self.h - 0.1) and span_start <= player.x <= span_end:
+                player.y -= max(self.h - 2.0, 1.0)
+            elif direction == "W" and player.x < 0.1 and span_start <= player.y <= span_end:
+                player.x += max(self.w - 2.0, 1.0)
+            elif direction == "E" and player.x > (self.w - 0.1) and span_start <= player.y <= span_end:
+                player.x -= max(self.w - 2.0, 1.0)
 
 
 # ============================================================
@@ -625,6 +730,7 @@ class Renderer:
         self.heart_img = heart_img
         self.zachet_img = zachet_img
         self.door_img = door_img
+        self.door_tex = pygame.transform.smoothscale(door_img, (C.TEXTURE_SIZE, C.TEXTURE_SIZE))
         self.victory_img = victory_img
         self.end_img = end_img
         self._rebuild_overlay()
@@ -645,14 +751,15 @@ class Renderer:
         self,
         world: World,
         player: Player,
-        monster: Monster,
+        monsters: List[Monster],
         show_monster: bool,
         is_dead: bool,
         door_pos: Optional[Tuple[float, float]] = None,
+        door_orientation: str = "vertical",
         door_open: bool = False,
-        zachetka_pos: Optional[Tuple[float, float]] = None,
+        zachetki: List[Tuple[float, float]] = [],
+        zachet_collected: List[bool] = [],
         lives: int = 3,
-        zachetka_collected: bool = False,
         show_minimap: bool = False,
     ) -> None:
         self.render.fill(C.CEIL_COLOR)
@@ -662,13 +769,17 @@ class Renderer:
         self._cast_walls(world, player, zbuffer)
 
         if show_monster and not is_dead:
-            self._draw_sprite(zbuffer, player, (monster.x, monster.y))
+            t_now = pygame.time.get_ticks() / 1000.0
+            for m in monsters:
+                if t_now >= m.active_time:
+                    self._draw_sprite(zbuffer, player, (m.x, m.y))
 
-        if zachetka_pos is not None and not zachetka_collected:
-            self._draw_billboard(zbuffer, player, zachetka_pos, self.zachet_img, dim=False, scale=1.0)
+        for pos, collected in zip(zachetki, zachet_collected):
+            if not collected:
+                self._draw_billboard(zbuffer, player, pos, self.zachet_img, dim=False, scale=1.0)
 
         if door_pos is not None:
-            self._draw_billboard(zbuffer, player, door_pos, self.door_img, dim=not door_open, scale=1.6)
+            self._draw_door_plane(zbuffer, player, door_pos, door_orientation, dim=not door_open)
 
 
         # upscale to screen
@@ -694,24 +805,33 @@ class Renderer:
             self.screen.blit(txt2, (w // 2 - txt2.get_width() // 2, int(h * 0.38)))
             return
 
-        # HUD (lives + zachetka)
+        # HUD (lives + zachetki)
         heart = pygame.transform.smoothscale(self.heart_img, (28, 28))
         for i in range(max(0, lives)):
             self.screen.blit(heart, (12 + i * 32, 12))
 
-        if zachetka_collected:
-            icon = pygame.transform.smoothscale(self.zachet_img, (34, 34))
-            self.screen.blit(icon, (12, 50))
+        icon = pygame.transform.smoothscale(self.zachet_img, (34, 34))
+        total = len(zachet_collected)
+        got = sum(1 for c in zachet_collected if c)
+        for i in range(total):
+            mul = 255 if zachet_collected[i] else 110
+            shaded = icon.copy()
+            shaded.fill((mul, mul, mul, 255), special_flags=pygame.BLEND_MULT)
+            self.screen.blit(shaded, (12 + i * 40, 50))
+        if total:
+            txt = self.font.render(f"{got}/{total}", True, (230, 230, 230))
+            self.screen.blit(txt, (12, 90))
 
         if show_minimap:
-            self._draw_minimap(world, player, door_pos, zachetka_pos if not zachetka_collected else None)
+            active_zachetki = [p for p, c in zip(zachetki, zachet_collected) if not c]
+            self._draw_minimap(world, player, door_pos, active_zachetki)
 
     def _draw_minimap(
         self,
         world: World,
         player: Player,
         door_pos: Optional[Tuple[float, float]],
-        zachetka_pos: Optional[Tuple[float, float]],
+        zachetki: List[Tuple[float, float]],
     ) -> None:
         map_w = 200
         cell = max(4, map_w // max(world.w, 1))
@@ -731,7 +851,7 @@ class Renderer:
             dy = int(door_pos[1] * cell)
             pygame.draw.circle(surf, (40, 140, 255, 240), (dx, dy), max(2, cell // 2))
 
-        if zachetka_pos is not None:
+        for zachetka_pos in zachetki:
             zx = int(zachetka_pos[0] * cell)
             zy = int(zachetka_pos[1] * cell)
             pygame.draw.circle(surf, (250, 200, 70, 240), (zx, zy), max(2, cell // 2))
@@ -866,6 +986,7 @@ class Renderer:
 
             hit = False
             side = 0
+            cell_type = "1"
             for _ in range(128):
                 if sideDistX < sideDistY:
                     sideDistX += deltaDistX
@@ -875,7 +996,8 @@ class Renderer:
                     sideDistY += deltaDistY
                     mapY += stepY
                     side = 1
-                if world.is_wall_cell(mapX, mapY):
+                cell_type = world.cell_at(mapX, mapY)
+                if cell_type in ("1", "D"):
                     hit = True
                     break
             if not hit:
@@ -914,7 +1036,8 @@ class Renderer:
             if visible_h <= 0:
                 continue
 
-            col = self.wall_tex.subsurface((texX, 0, 1, tex_h))
+            tex = self.door_tex if cell_type == "D" else self.wall_tex
+            col = tex.subsurface((texX, 0, 1, tex_h))
             col_scaled = pygame.transform.scale(col, (1, visible_h))
 
             shade_mul = 0.78 if side == 1 else 1.0
@@ -925,6 +1048,63 @@ class Renderer:
             col_scaled = col_scaled.copy()
             col_scaled.fill((mul, mul, mul), special_flags=pygame.BLEND_MULT)
             self.render.blit(col_scaled, (x, draw_start))
+
+    def _draw_door_plane(
+        self,
+        zbuffer: List[float],
+        p: Player,
+        door_pos: Tuple[float, float],
+        orientation: str,
+        dim: bool = True,
+    ) -> None:
+        tex_w, tex_h = self.door_tex.get_size()
+        door_x, door_y = door_pos
+        half = 0.48
+        for x in range(C.RENDER_W):
+            cameraX = 2.0 * x / C.RENDER_W - 1.0
+            rayDirX = p.dirx + p.planex * cameraX
+            rayDirY = p.diry + p.planey * cameraX
+
+            if orientation == "vertical":
+                if abs(rayDirX) < 1e-6:
+                    continue
+                t = (door_x - p.x) / rayDirX
+                hit_y = p.y + t * rayDirY
+                tex_coord = hit_y - (door_y - half)
+            else:
+                if abs(rayDirY) < 1e-6:
+                    continue
+                t = (door_y - p.y) / rayDirY
+                hit_x = p.x + t * rayDirX
+                tex_coord = hit_x - (door_x - half)
+
+            if t <= 0:
+                continue
+            if tex_coord < 0 or tex_coord > (half * 2):
+                continue
+
+            perp = t
+            lineHeight = int(abs(C.RENDER_H / perp))
+            lineHeight = int(clamp(lineHeight, 4, C.RENDER_H * C.MAX_LINEHEIGHT_MULT))
+            draw_start = -lineHeight // 2 + C.RENDER_H // 2
+            draw_end = draw_start + lineHeight
+            visible_h = draw_end - draw_start
+            if visible_h <= 0:
+                continue
+
+            texX = int(clamp(tex_coord / (half * 2) * tex_w, 0, tex_w - 1))
+            col = self.door_tex.subsurface((texX, 0, 1, tex_h))
+            col_scaled = pygame.transform.scale(col, (1, visible_h))
+
+            shade_mul = 0.85 if orientation == "vertical" else 0.92
+            fog_factor = math.exp(-C.FOG_STRENGTH * perp * 22.0)
+            mul = int(255 * fog_factor * shade_mul)
+            mul = int(clamp(mul, 35 if dim else 80, 255))
+            col_scaled = col_scaled.copy()
+            col_scaled.fill((mul, mul, mul), special_flags=pygame.BLEND_MULT)
+
+            if perp < zbuffer[x]:
+                self.render.blit(col_scaled, (x, draw_start))
 
     def _draw_sprite(self, zbuffer: List[float], p: Player, spr_pos: Tuple[float, float]) -> None:
         sprX = spr_pos[0] - p.x
@@ -1263,19 +1443,22 @@ class PlayState(State):
     STATE_DEAD = "dead"
 
     def __init__(self) -> None:
-        self.world = World()
+        self.map_index = 0
+        self.world = World(MAP_VARIANTS[self.map_index])
         self.player = Player()
-        self.monster = Monster()
+        self.monsters: List[Monster] = [Monster()]
         self.state = self.STATE_PLAY
         self.dead_time = 0.0
 
         self.lives = 3
         self.spawn_point: Tuple[float, float] = (2.5, 2.5)
         self.door_pos: Tuple[float, float] = (0.0, 0.0)
-        self.zachetka_pos: Tuple[float, float] = (0.0, 0.0)
-        self.zachetka_collected = False
+        self.door_orientation: str = "vertical"
+        self.zachetki: List[Tuple[float, float]] = []
+        self.zachet_collected: List[bool] = []
         self.door_open = False
         self.initialized = False
+        self.monster_count = 1
 
     def on_enter(self, app: "App") -> None:
         pygame.event.set_grab(True)
@@ -1293,7 +1476,14 @@ class PlayState(State):
         app.audio.stop_drone()
 
     def start_new_run(self, app: "App") -> None:
-        self.world = World()
+        self.map_index = random.randrange(len(MAP_VARIANTS))
+        self.world = World(MAP_VARIANTS[self.map_index])
+
+        # largest map gets two monsters
+        areas = [len(m.grid) * len(m.grid[0]) for m in MAP_VARIANTS]
+        max_area = max(areas)
+        self.monster_count = 2 if areas[self.map_index] == max_area else 1
+
         self.spawn_point = app.find_empty_cell(self.world, (2, 2))
 
         def pick_unique(prefer: Tuple[int, int], avoid: List[Tuple[float, float]]) -> Tuple[float, float]:
@@ -1309,10 +1499,12 @@ class PlayState(State):
                 tries += 1
             return pos
 
-        self.door_pos = pick_unique((self.world.w - 3, self.world.h - 3), [self.spawn_point])
-        self.zachetka_pos = pick_unique((self.world.w // 2, self.world.h // 2), [self.spawn_point, self.door_pos])
+        self.door_pos, self.door_orientation = self._pick_door(app, pick_unique)
+        self.zachetki = []
+        for prefer in ((self.world.w // 2, self.world.h // 2), (2, self.world.h - 3), (self.world.w - 3, 2)):
+            self.zachetki.append(pick_unique(prefer, [self.spawn_point, self.door_pos] + self.zachetki))
+        self.zachet_collected = [False] * len(self.zachetki)
         self.lives = 3
-        self.zachetka_collected = False
         self.door_open = False
         self._respawn(app, reset_zachetka=False)
 
@@ -1321,14 +1513,18 @@ class PlayState(State):
         self.player.dirx, self.player.diry = 1.0, 0.0
         self.player.planex, self.player.planey = 0.0, C.FOV_PLANE
 
-        self.monster.x, self.monster.y = app.find_empty_cell(self.world, (self.world.w - 3, self.world.h - 3))
-        self.monster.active_time = pygame.time.get_ticks() / 1000.0 + C.MONSTER_SPAWN_DELAY
-        self.monster.next_replan = 0.0
-        self.monster.target = None
-        self.monster.tunnel_dist_cells = 999
+        self.monsters = []
+        for _ in range(self.monster_count):
+            m = Monster()
+            m.x, m.y = app.find_empty_cell(self.world, (self.world.w - 3, self.world.h - 3))
+            m.active_time = pygame.time.get_ticks() / 1000.0 + C.MONSTER_SPAWN_DELAY
+            m.next_replan = 0.0
+            m.target = None
+            m.tunnel_dist_cells = 999
+            self.monsters.append(m)
 
         if reset_zachetka:
-            self.zachetka_collected = False
+            self.zachet_collected = [False] * len(self.zachet_collected)
             self.door_open = False
 
         self.state = self.STATE_PLAY
@@ -1338,6 +1534,36 @@ class PlayState(State):
         app.audio.set_game_drone_dynamic(0.25)
         app.audio.start_drone()
         pygame.mouse.get_rel()
+
+    def _pick_door(
+        self,
+        app: "App",
+        pick_unique: Any,
+    ) -> Tuple[Tuple[float, float], str]:
+        tries = 0
+        while tries < 200:
+            pos = pick_unique((self.world.w - 3, self.world.h - 3), [self.spawn_point])
+            mx, my = int(pos[0]), int(pos[1])
+            if self.world.is_wall_cell(mx, my):
+                tries += 1
+                continue
+            neighbors = [
+                (-1, 0, "vertical"),
+                (1, 0, "vertical"),
+                (0, -1, "horizontal"),
+                (0, 1, "horizontal"),
+            ]
+            orientation = "vertical"
+            found = False
+            for dx, dy, ori in neighbors:
+                if self.world.is_wall_cell(mx + dx, my + dy):
+                    orientation = ori
+                    found = True
+                    break
+            if found:
+                return pos, orientation
+            tries += 1
+        return pick_unique((self.world.w - 3, self.world.h - 3), [self.spawn_point]), "vertical"
 
     def handle_event(self, app: "App", event: pygame.event.Event) -> None:
         if event.type == pygame.KEYDOWN:
@@ -1349,14 +1575,16 @@ class PlayState(State):
                 app.show_minimap = not app.show_minimap
 
     def _handle_pickups(self, app: "App") -> None:
-        if not self.zachetka_collected:
-            if math.hypot(self.player.x - self.zachetka_pos[0], self.player.y - self.zachetka_pos[1]) < 0.6:
-                self.zachetka_collected = True
-                self.door_open = True
-                app.audio.play_pickup()
+        for i, pos in enumerate(self.zachetki):
+            if not self.zachet_collected[i]:
+                if math.hypot(self.player.x - pos[0], self.player.y - pos[1]) < 0.6:
+                    self.zachet_collected[i] = True
+                    app.audio.play_pickup()
+
+        self.door_open = all(self.zachet_collected)
 
         if self.door_open:
-            if math.hypot(self.player.x - self.door_pos[0], self.player.y - self.door_pos[1]) < 0.75:
+            if math.hypot(self.player.x - self.door_pos[0], self.player.y - self.door_pos[1]) < 0.85:
                 app.change_state(VictoryState())
 
     def lose_life(self, app: "App") -> None:
@@ -1408,58 +1636,68 @@ class PlayState(State):
         if not self.world.is_wall_cell(int(self.player.x), int(ny)):
             self.player.y = ny
 
+        self.world.apply_wrap(self.player)
+
         self._handle_pickups(app)
 
-        if t < self.monster.active_time:
+        if t < min(m.active_time for m in self.monsters):
             app.audio.set_game_drone_dynamic(0.25)
             return
 
-        if t >= self.monster.next_replan:
-            self.monster.next_replan = t + C.REPLAN_INTERVAL
+        px_cell, py_cell = int(self.player.x), int(self.player.y)
+        dist_map = compute_dist_map(self.world, px_cell, py_cell)
 
-            px_cell, py_cell = int(self.player.x), int(self.player.y)
-            dist_map = compute_dist_map(self.world, px_cell, py_cell)
+        min_dist = 999
+        for m in self.monsters:
+            if t < m.active_time:
+                continue
+            if t >= m.next_replan:
+                m.next_replan = t + C.REPLAN_INTERVAL
 
-            mx_cell, my_cell = int(self.monster.x), int(self.monster.y)
-            d = dist_map[my_cell][mx_cell]
-            self.monster.tunnel_dist_cells = d if d != -1 else 999
+                mx_cell, my_cell = int(m.x), int(m.y)
+                d = dist_map[my_cell][mx_cell]
+                m.tunnel_dist_cells = d if d != -1 else 999
 
-            nxt = pick_next_cell_for_monster(dist_map, mx_cell, my_cell)
-            if nxt is not None:
-                self.monster.target = (nxt[0] + 0.5, nxt[1] + 0.5)
-            else:
-                self.monster.target = (self.player.x, self.player.y)
+                nxt = pick_next_cell_for_monster(dist_map, mx_cell, my_cell)
+                if nxt is not None:
+                    m.target = (nxt[0] + 0.5, nxt[1] + 0.5)
+                else:
+                    m.target = (self.player.x, self.player.y)
 
-        if self.monster.tunnel_dist_cells >= 999:
+            min_dist = min(min_dist, m.tunnel_dist_cells)
+
+            if m.target is None:
+                m.target = (self.player.x, self.player.y)
+
+            tx, ty = m.target
+            mdx = tx - m.x
+            mdy = ty - m.y
+            md = math.hypot(mdx, mdy) + 1e-9
+
+            step = (C.MOVE_SPEED * C.RUN_MULT) * dt
+            mx_try = m.x + (mdx / md) * step
+            my_try = m.y + (mdy / md) * step
+
+            if not self.world.is_blocking_cell(int(mx_try), int(m.y)):
+                m.x = mx_try
+            if not self.world.is_blocking_cell(int(m.x), int(my_try)):
+                m.y = my_try
+
+            self.world.apply_wrap(m)  # type: ignore[arg-type]
+
+            if math.hypot(m.x - tx, m.y - ty) < 0.18:
+                m.target = None
+
+            if math.hypot(self.player.x - m.x, self.player.y - m.y) < C.KILL_DIST:
+                self.lose_life(app)
+
+        if min_dist >= 999:
             app.audio.set_game_drone_dynamic(0.12)
         else:
-            v = 1.0 - (self.monster.tunnel_dist_cells / C.SOUND_AUDIBLE_CELLS)
+            v = 1.0 - (min_dist / C.SOUND_AUDIBLE_CELLS)
             v = clamp(v, 0.0, 1.0)
             v = v ** C.SOUND_CURVE
             app.audio.set_game_drone_dynamic(0.12 + 0.88 * v)
-
-        if self.monster.target is None:
-            self.monster.target = (self.player.x, self.player.y)
-
-        tx, ty = self.monster.target
-        mdx = tx - self.monster.x
-        mdy = ty - self.monster.y
-        md = math.hypot(mdx, mdy) + 1e-9
-
-        step = (C.MOVE_SPEED * C.RUN_MULT) * dt
-        mx_try = self.monster.x + (mdx / md) * step
-        my_try = self.monster.y + (mdy / md) * step
-
-        if not self.world.is_wall_cell(int(mx_try), int(self.monster.y)):
-            self.monster.x = mx_try
-        if not self.world.is_wall_cell(int(self.monster.x), int(my_try)):
-            self.monster.y = my_try
-
-        if math.hypot(self.monster.x - tx, self.monster.y - ty) < 0.18:
-            self.monster.target = None
-
-        if math.hypot(self.player.x - self.monster.x, self.player.y - self.monster.y) < C.KILL_DIST:
-            self.lose_life(app)
 
     def serialize(self) -> Dict[str, Any]:
         return {
@@ -1472,19 +1710,24 @@ class PlayState(State):
                 "planex": self.player.planex,
                 "planey": self.player.planey,
             },
-            "monster": {
-                "x": self.monster.x,
-                "y": self.monster.y,
-                "active_time": self.monster.active_time,
-                "next_replan": self.monster.next_replan,
-                "tunnel_dist_cells": self.monster.tunnel_dist_cells,
-            },
+            "monsters": [
+                {
+                    "x": m.x,
+                    "y": m.y,
+                    "active_time": m.active_time,
+                    "next_replan": m.next_replan,
+                    "tunnel_dist_cells": m.tunnel_dist_cells,
+                }
+                for m in self.monsters
+            ],
             "lives": self.lives,
             "spawn_point": self.spawn_point,
-            "zachetka_pos": self.zachetka_pos,
+            "zachetki": self.zachetki,
             "door_pos": self.door_pos,
-            "zachetka_collected": self.zachetka_collected,
+            "door_orientation": self.door_orientation,
+            "zachet_collected": self.zachet_collected,
             "door_open": self.door_open,
+            "map_index": self.map_index,
         }
 
     def load_from_data(self, data: Dict[str, Any]) -> None:
@@ -1497,38 +1740,51 @@ class PlayState(State):
             planex=float(p.get("planex", self.player.planex)),
             planey=float(p.get("planey", self.player.planey)),
         )
-        m = data.get("monster", {})
-        self.monster = Monster(
-            x=float(m.get("x", self.monster.x)),
-            y=float(m.get("y", self.monster.y)),
-            active_time=float(m.get("active_time", pygame.time.get_ticks() / 1000.0)),
-            next_replan=float(m.get("next_replan", 0.0)),
-            target=None,
-            tunnel_dist_cells=int(m.get("tunnel_dist_cells", 999)),
-        )
+        self.map_index = int(data.get("map_index", self.map_index)) % len(MAP_VARIANTS)
+        self.world = World(MAP_VARIANTS[self.map_index])
+        monsters_data = data.get("monsters", [])
+        self.monsters = []
+        for m in monsters_data:
+            self.monsters.append(
+                Monster(
+                    x=float(m.get("x", 0.0)),
+                    y=float(m.get("y", 0.0)),
+                    active_time=float(m.get("active_time", pygame.time.get_ticks() / 1000.0)),
+                    next_replan=float(m.get("next_replan", 0.0)),
+                    target=None,
+                    tunnel_dist_cells=int(m.get("tunnel_dist_cells", 999)),
+                )
+            )
+        if not self.monsters:
+            self.monsters = [Monster()]
         self.lives = int(data.get("lives", self.lives))
         self.spawn_point = tuple(data.get("spawn_point", self.spawn_point))  # type: ignore
-        self.zachetka_pos = tuple(data.get("zachetka_pos", self.zachetka_pos))  # type: ignore
+        self.zachetki = [tuple(z) for z in data.get("zachetki", self.zachetki)]  # type: ignore
         self.door_pos = tuple(data.get("door_pos", self.door_pos))  # type: ignore
-        self.zachetka_collected = bool(data.get("zachetka_collected", self.zachetka_collected))
-        self.door_open = bool(data.get("door_open", self.door_open or self.zachetka_collected))
+        self.door_orientation = str(data.get("door_orientation", self.door_orientation))
+        self.zachet_collected = [bool(z) for z in data.get("zachet_collected", self.zachet_collected)]
+        if not self.zachet_collected:
+            self.zachet_collected = [False] * len(self.zachetki)
+        self.door_open = bool(data.get("door_open", self.door_open or all(self.zachet_collected)))
+        self.monster_count = max(1, len(self.monsters))
         self.state = self.STATE_PLAY
 
     def draw(self, app: "App") -> None:
         t = pygame.time.get_ticks() / 1000.0
-        show_monster = t >= self.monster.active_time
+        show_monster = any(t >= m.active_time for m in self.monsters)
         is_dead = (self.state == self.STATE_DEAD)
         app.renderer.draw_play(
             self.world,
             self.player,
-            self.monster,
+            self.monsters,
             show_monster,
             is_dead,
             door_pos=self.door_pos,
+            door_orientation=self.door_orientation,
             door_open=self.door_open,
-            zachetka_pos=self.zachetka_pos,
+            zachetki=self.zachetki,
+            zachet_collected=self.zachet_collected,
             lives=self.lives,
-            zachetka_collected=self.zachetka_collected,
             show_minimap=app.show_minimap,
         )
 
@@ -1696,7 +1952,7 @@ class App:
         self.cfg = RuntimeConfig()
         self.load_config()
 
-        self.show_minimap = True
+        self.show_minimap = False
 
         self.screen = self._create_screen()
         pygame.display.set_caption("ESCAPE FROM FAMCS")
