@@ -125,7 +125,7 @@ class MapSpec:
     wrap_portals: Tuple[Tuple[str, float, float], ...] = tuple()
 
 
-MAP_VARIANTS: Tuple[MapSpec, ...] = (
+BASE_MAP_VARIANTS: Tuple[MapSpec, ...] = (
     MapSpec(
         grid=[
             "111111111111111",
@@ -224,6 +224,25 @@ MAP_VARIANTS: Tuple[MapSpec, ...] = (
         ],
     ),
 )
+
+
+def scale_map_spec(map_spec: MapSpec, factor: int = 2) -> MapSpec:
+    scaled_grid: List[str] = []
+
+    for row in map_spec.grid:
+        scaled_row = "".join(cell * factor for cell in row)
+        for _ in range(factor):
+            scaled_grid.append(scaled_row)
+
+    scaled_portals = tuple(
+        (direction, span_start * factor, span_end * factor)
+        for direction, span_start, span_end in map_spec.wrap_portals
+    )
+
+    return MapSpec(grid=scaled_grid, wrap_portals=scaled_portals)
+
+
+MAP_VARIANTS: Tuple[MapSpec, ...] = tuple(scale_map_spec(m) for m in BASE_MAP_VARIANTS)
 
 # ============================================================
 # 2) World (Map + collision)
@@ -1514,14 +1533,17 @@ class PlayState(State):
         self.player.planex, self.player.planey = 0.0, C.FOV_PLANE
 
         self.monsters = []
+        monster_positions: List[Tuple[float, float]] = []
         for _ in range(self.monster_count):
             m = Monster()
-            m.x, m.y = app.find_empty_cell(self.world, (self.world.w - 3, self.world.h - 3))
+            spawn_pos = self._pick_monster_spawn(app, monster_positions)
+            m.x, m.y = spawn_pos
             m.active_time = pygame.time.get_ticks() / 1000.0 + C.MONSTER_SPAWN_DELAY
             m.next_replan = 0.0
             m.target = None
             m.tunnel_dist_cells = 999
             self.monsters.append(m)
+            monster_positions.append(spawn_pos)
 
         if reset_zachetka:
             self.zachet_collected = [False] * len(self.zachet_collected)
@@ -1534,6 +1556,39 @@ class PlayState(State):
         app.audio.set_game_drone_dynamic(0.25)
         app.audio.start_drone()
         pygame.mouse.get_rel()
+
+    def _pick_monster_spawn(
+        self, app: "App", avoid: List[Tuple[float, float]]
+    ) -> Tuple[float, float]:
+        best_pos: Optional[Tuple[float, float]] = None
+        best_score = -1.0
+
+        for y in range(1, self.world.h - 1):
+            for x in range(1, self.world.w - 1):
+                if self.world.is_wall_cell(x, y):
+                    continue
+                pos = (x + 0.5, y + 0.5)
+
+                dist_to_player = math.hypot(
+                    pos[0] - self.spawn_point[0], pos[1] - self.spawn_point[1]
+                )
+                if dist_to_player < 8.0:
+                    continue
+
+                nearest_monster = min(
+                    (math.hypot(pos[0] - ax, pos[1] - ay) for ax, ay in avoid),
+                    default=dist_to_player,
+                )
+
+                score = dist_to_player + 0.5 * nearest_monster
+                if score > best_score:
+                    best_score = score
+                    best_pos = pos
+
+        if best_pos is not None:
+            return best_pos
+
+        return app.find_empty_cell(self.world, (self.world.w - 3, self.world.h - 3))
 
     def _pick_door(
         self,
