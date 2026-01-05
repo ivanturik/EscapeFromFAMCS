@@ -237,27 +237,81 @@ BASE_MAP_VARIANTS: Tuple[MapSpec, ...] = (
 )
 
 
-def _scale_map_spec(spec: MapSpec, s: int) -> MapSpec:
-    new_grid: List[str] = []
-    for row in spec.grid:
-        row2 = "".join(ch * s for ch in row)
-        for _ in range(s):
-            new_grid.append(row2)
-
-    new_portals = tuple((d, a * s, b * s) for (d, a, b) in spec.wrap_portals)
-    return MapSpec(grid=new_grid, wrap_portals=new_portals)
+def _odd(n: int) -> int:
+    return n if (n % 2 == 1) else n + 1
 
 
-def _ensure_min_size(spec: MapSpec, min_size: int = 40) -> MapSpec:
-    h = len(spec.grid)
-    w = len(spec.grid[0]) if h else 0
-    if w <= 0 or h <= 0:
-        return spec
-    s = max(1, math.ceil(min_size / w), math.ceil(min_size / h))
-    return _scale_map_spec(spec, s)
+def generate_maze_grid(w: int, h: int,
+                       loop_chance: float = 0.07,
+                       room_attempts: int = 22) -> List[str]:
+    w = _odd(max(w, 25))
+    h = _odd(max(h, 25))
+
+    g = [["1"] * w for _ in range(h)]
+
+    # DFS/backtracker: пути шириной 1 клетка, стены тоже 1 клетка
+    sx, sy = 1, 1
+    g[sy][sx] = "0"
+    stack = [(sx, sy)]
+    dirs = [(2, 0), (-2, 0), (0, 2), (0, -2)]
+
+    while stack:
+        x, y = stack[-1]
+        neigh = []
+        for dx, dy in dirs:
+            nx, ny = x + dx, y + dy
+            if 1 <= nx < w - 1 and 1 <= ny < h - 1 and g[ny][nx] == "1":
+                neigh.append((nx, ny, dx, dy))
+
+        if neigh:
+            nx, ny, dx, dy = random.choice(neigh)
+            g[y + dy // 2][x + dx // 2] = "0"
+            g[ny][nx] = "0"
+            stack.append((nx, ny))
+        else:
+            stack.pop()
+
+    # “комнатки” чтобы лабиринт был менее “ниточный”
+    for _ in range(room_attempts):
+        rw = random.randrange(3, 8)
+        rh = random.randrange(3, 8)
+        x0 = random.randrange(1, w - rw - 1)
+        y0 = random.randrange(1, h - rh - 1)
+        for yy in range(y0, y0 + rh):
+            for xx in range(x0, x0 + rw):
+                g[yy][xx] = "0"
+
+    # петли (убираем часть стен, чтобы было больше вариантов путей)
+    for y in range(1, h - 1):
+        for x in range(1, w - 1):
+            if g[y][x] != "1":
+                continue
+            if random.random() > loop_chance:
+                continue
+            if g[y][x - 1] == "0" and g[y][x + 1] == "0":
+                g[y][x] = "0"
+            elif g[y - 1][x] == "0" and g[y + 1][x] == "0":
+                g[y][x] = "0"
+
+    # жёсткая рамка из стен
+    for x in range(w):
+        g[0][x] = "1"
+        g[h - 1][x] = "1"
+    for y in range(h):
+        g[y][0] = "1"
+        g[y][w - 1] = "1"
+
+    return ["".join(row) for row in g]
 
 
-MAP_VARIANTS: Tuple[MapSpec, ...] = tuple(_ensure_min_size(m, 40) for m in BASE_MAP_VARIANTS)
+def generate_maze_spec(min_size: int = 45, max_size: int = 65) -> MapSpec:
+    w = _odd(random.randrange(min_size, max_size + 1))
+    h = _odd(random.randrange(min_size, max_size + 1))
+    return MapSpec(grid=generate_maze_grid(w, h))
+
+
+# Добавим несколько больших карт + оставим твои ручные варианты
+MAP_VARIANTS: Tuple[MapSpec, ...] = BASE_MAP_VARIANTS + tuple(generate_maze_spec() for _ in range(6))
 
 # ============================================================
 # 2) World (Map + collision)
@@ -780,7 +834,10 @@ class Renderer:
         self.heart_img = heart_img
         self.zachet_img = zachet_img
         self.door_img = door_img
-        self.door_tex = pygame.transform.smoothscale(door_img, (C.TEXTURE_SIZE, C.TEXTURE_SIZE))
+        self.door_overlay = pygame.transform.smoothscale(door_img, (C.TEXTURE_SIZE, C.TEXTURE_SIZE))
+        self.door_wall_tex = self.wall_tex.copy()          # фон — стена
+        self.door_wall_tex.blit(self.door_overlay, (0, 0)) # дверь поверх стены (alpha ок)
+        self.door_tex = self.door_wall_tex
         self.victory_img = victory_img
         self.end_img = end_img
         self._rebuild_overlay()
@@ -819,21 +876,30 @@ class Renderer:
         zbuffer = [1e9] * C.RENDER_W
         self._cast_walls(world, player, zbuffer)
 
+        sprites = []
+
+        # монстры (только активные)
         if show_monster and not is_dead:
             t_now = pygame.time.get_ticks() / 1000.0
             for m in monsters:
                 if t_now >= m.active_time:
-                    self._draw_sprite(zbuffer, player, (m.x, m.y))
+                    sprites.append(("monster", (m.x, m.y), self.monster_img, False, 1.10))
 
+        # зачётки
         for pos, collected in zip(zachetki, zachet_collected):
             if not collected:
-                self._draw_billboard(zbuffer, player, pos, self.zachet_img, dim=False, scale=1.0)
+                sprites.append(("zachet", pos, self.zachet_img, False, 1.0))
 
-        if door_plane_pos is None:
-            door_plane_pos = door_pos
+        # сортировка: дальние -> ближние
+        def _dsq(pp: Tuple[float, float]) -> float:
+            dx = pp[0] - player.x
+            dy = pp[1] - player.y
+            return dx * dx + dy * dy
 
-        if door_plane_pos is not None:
-            self._draw_door_plane(zbuffer, player, door_plane_pos, door_orientation, dim=True)
+        sprites.sort(key=lambda s: _dsq(s[1]), reverse=True)
+
+        for _, pos, tex, dim, scale in sprites:
+            self._draw_billboard(zbuffer, player, pos, tex, dim=dim, scale=scale)
 
 
         # upscale to screen
@@ -1052,7 +1118,7 @@ class Renderer:
                     mapY += stepY
                     side = 1
                 cell_type = world.cell_at(mapX, mapY)
-                if cell_type == "1":
+                if cell_type in ("1", "D"):
                     hit = True
                     break
             if not hit:
@@ -1091,7 +1157,7 @@ class Renderer:
             if visible_h <= 0:
                 continue
 
-            tex = self.wall_tex
+            tex = self.door_wall_tex if cell_type == "D" else self.wall_tex
             col = tex.subsurface((texX, 0, 1, tex_h))
             col_scaled = pygame.transform.scale(col, (1, visible_h))
 
