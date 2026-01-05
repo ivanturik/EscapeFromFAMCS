@@ -302,6 +302,34 @@ def generate_maze_grid(w: int, h: int,
         g[y][0] = "1"
         g[y][w - 1] = "1"
 
+    # --- убираем изолированные "острова" (иначе спавн может попасть в камеру без выходов) ---
+    dirs4 = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+
+    start = None
+    for yy in range(1, h - 1):
+        for xx in range(1, w - 1):
+            if g[yy][xx] == "0":
+                start = (xx, yy)
+                break
+        if start:
+            break
+
+    if start:
+        q = deque([start])
+        seen = {start}
+        while q:
+            x, y = q.popleft()
+            for dx, dy in dirs4:
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < w and 0 <= ny < h and g[ny][nx] == "0" and (nx, ny) not in seen:
+                    seen.add((nx, ny))
+                    q.append((nx, ny))
+
+        for yy in range(1, h - 1):
+            for xx in range(1, w - 1):
+                if g[yy][xx] == "0" and (xx, yy) not in seen:
+                    g[yy][xx] = "1"
+
     return ["".join(row) for row in g]
 
 
@@ -325,27 +353,29 @@ class World:
         self.w = len(self.MAP[0])
         self.wrap_portals = list(map_spec.wrap_portals)
 
+    def portal_allows(self, direction: str, coord: float) -> bool:
+        for d, a, b in self.wrap_portals:
+            if d == direction and a <= coord <= b:
+                return True
+        return False
+
     def cell_at(self, mx: int, my: int) -> str:
-        # внутри карты — как обычно
         if 0 <= mx < self.w and 0 <= my < self.h:
             return self.MAP[my][mx]
-
-        # вне карты: разрешаем "пустоту" только там, где есть портал
-        fx = mx + 0.5
-        fy = my + 0.5
-
-        if self.wrap_portals:
-            for direction, span_start, span_end in self.wrap_portals:
-                if direction == "N" and my < 0 and span_start <= fx <= span_end:
-                    return "0"
-                if direction == "S" and my >= self.h and span_start <= fx <= span_end:
-                    return "0"
-                if direction == "W" and mx < 0 and span_start <= fy <= span_end:
-                    return "0"
-                if direction == "E" and mx >= self.w and span_start <= fy <= span_end:
-                    return "0"
-
         return "1"
+
+    def _snap_to_open(self, x: float, y: float) -> Tuple[float, float]:
+        mx, my = int(x), int(y)
+        if 0 <= mx < self.w and 0 <= my < self.h and not self.is_blocking_cell(mx, my):
+            return x, y
+
+        for rad in range(1, 4):
+            for dy in range(-rad, rad + 1):
+                for dx in range(-rad, rad + 1):
+                    nx, ny = mx + dx, my + dy
+                    if 0 <= nx < self.w and 0 <= ny < self.h and not self.is_blocking_cell(nx, ny):
+                        return nx + 0.5, ny + 0.5
+        return x, y
 
     def is_wall_cell(self, mx: int, my: int) -> bool:
         return self.cell_at(mx, my) == "1"
@@ -368,15 +398,26 @@ class World:
     def apply_wrap(self, player: "Player") -> None:
         if not self.wrap_portals:
             return
-        for direction, span_start, span_end in self.wrap_portals:
-            if direction == "N" and player.y < 0.1 and span_start <= player.x <= span_end:
-                player.y += max(self.h - 2.0, 1.0)
-            elif direction == "S" and player.y > (self.h - 0.1) and span_start <= player.x <= span_end:
-                player.y -= max(self.h - 2.0, 1.0)
-            elif direction == "W" and player.x < 0.1 and span_start <= player.y <= span_end:
-                player.x += max(self.w - 2.0, 1.0)
-            elif direction == "E" and player.x > (self.w - 0.1) and span_start <= player.y <= span_end:
-                player.x -= max(self.w - 2.0, 1.0)
+
+        edge = 0.35
+        wrapped = False
+
+        if player.y < edge and self.portal_allows("N", player.x):
+            player.y += (self.h - 1)
+            wrapped = True
+        elif player.y > (self.h - edge) and self.portal_allows("S", player.x):
+            player.y -= (self.h - 1)
+            wrapped = True
+
+        if player.x < edge and self.portal_allows("W", player.y):
+            player.x += (self.w - 1)
+            wrapped = True
+        elif player.x > (self.w - edge) and self.portal_allows("E", player.y):
+            player.x -= (self.w - 1)
+            wrapped = True
+
+        if wrapped:
+            player.x, player.y = self._snap_to_open(player.x, player.y)
 
 
 # ============================================================
@@ -894,6 +935,15 @@ class Renderer:
         zbuffer = [1e9] * C.RENDER_W
         self._cast_walls(world, player, zbuffer)
 
+        if (not door_open) and (door_plane_pos is not None):
+            self._draw_door_plane(
+                zbuffer,
+                player,
+                door_plane_pos,
+                door_orientation,
+                dim=False,
+            )
+
         sprites = []
 
         # монстры (только активные)
@@ -1096,6 +1146,7 @@ class Renderer:
 
     def _cast_walls(self, world: World, p: Player, zbuffer: List[float]) -> None:
         tex_w, tex_h = self.wall_tex.get_size()
+        max_steps = world.w * world.h * 4
 
         for x in range(C.RENDER_W):
             cameraX = 2.0 * x / C.RENDER_W - 1.0
@@ -1105,8 +1156,8 @@ class Renderer:
             mapX = int(p.x)
             mapY = int(p.y)
 
-            deltaDistX = abs(1.0 / rayDirX) if rayDirX != 0 else 1e30
-            deltaDistY = abs(1.0 / rayDirY) if rayDirY != 0 else 1e30
+            deltaDistX = abs(1.0 / rayDirX) if abs(rayDirX) > 1e-12 else 1e30
+            deltaDistY = abs(1.0 / rayDirY) if abs(rayDirY) > 1e-12 else 1e30
 
             if rayDirX < 0:
                 stepX = -1
@@ -1125,27 +1176,66 @@ class Renderer:
             hit = False
             side = 0
             cell_type = "1"
-            max_steps = max(world.w, world.h) * 2
+            perp = 1e9
+
             for _ in range(max_steps):
                 if sideDistX < sideDistY:
                     sideDistX += deltaDistX
                     mapX += stepX
                     side = 0
+                    traveled = sideDistX - deltaDistX
                 else:
                     sideDistY += deltaDistY
                     mapY += stepY
                     side = 1
+                    traveled = sideDistY - deltaDistY
+
+                if mapY < 0:
+                    x_at = p.x + rayDirX * traveled
+                    if world.portal_allows("N", x_at):
+                        mapY = world.h - 1
+                    else:
+                        hit = True
+                        cell_type = "1"
+                        perp = traveled
+                        break
+                elif mapY >= world.h:
+                    x_at = p.x + rayDirX * traveled
+                    if world.portal_allows("S", x_at):
+                        mapY = 0
+                    else:
+                        hit = True
+                        cell_type = "1"
+                        perp = traveled
+                        break
+
+                if mapX < 0:
+                    y_at = p.y + rayDirY * traveled
+                    if world.portal_allows("W", y_at):
+                        mapX = world.w - 1
+                    else:
+                        hit = True
+                        cell_type = "1"
+                        perp = traveled
+                        break
+                elif mapX >= world.w:
+                    y_at = p.y + rayDirY * traveled
+                    if world.portal_allows("E", y_at):
+                        mapX = 0
+                    else:
+                        hit = True
+                        cell_type = "1"
+                        perp = traveled
+                        break
+
                 cell_type = world.cell_at(mapX, mapY)
                 if cell_type in ("1", "D"):
                     hit = True
+                    perp = traveled
                     break
+
             if not hit:
                 continue
-
-            if side == 0:
-                perp = (mapX - p.x + (1 - stepX) / 2) / (rayDirX if rayDirX != 0 else 1e-6)
-            else:
-                perp = (mapY - p.y + (1 - stepY) / 2) / (rayDirY if rayDirY != 0 else 1e-6)
 
             perp = max(perp, C.MIN_WALL_DIST)
             zbuffer[x] = perp
@@ -1153,10 +1243,8 @@ class Renderer:
             line_h = int(C.RENDER_H / perp)
             line_h = min(line_h, C.RENDER_H * C.MAX_LINEHEIGHT_MULT)
 
-            draw_start = -line_h // 2 + C.RENDER_H // 2
-            draw_end = line_h // 2 + C.RENDER_H // 2
-            draw_start = max(0, draw_start)
-            draw_end = min(C.RENDER_H - 1, draw_end)
+            draw_start = max(0, -line_h // 2 + C.RENDER_H // 2)
+            draw_end = min(C.RENDER_H - 1, line_h // 2 + C.RENDER_H // 2)
 
             if side == 0:
                 wallX = p.y + perp * rayDirY
@@ -1181,8 +1269,7 @@ class Renderer:
 
             shade_mul = 0.78 if side == 1 else 1.0
             fog_factor = math.exp(-C.FOG_STRENGTH * perp * 22.0)
-            mul = int(255 * fog_factor * shade_mul)
-            mul = int(clamp(mul, 20, 255))
+            mul = int(clamp(int(255 * fog_factor * shade_mul), 20, 255))
 
             col_scaled = col_scaled.copy()
             col_scaled.fill((mul, mul, mul), special_flags=pygame.BLEND_MULT)
