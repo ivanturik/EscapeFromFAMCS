@@ -49,6 +49,7 @@ class Const:
     RUN_MULT: float = 1.75
     ROT_SPEED_KEYS: float = 2.2
     MOUSE_SENS: float = 0.0025
+    PLAYER_RADIUS: float = 0.28
 
     # Camera / atmosphere
     FOV_PLANE: float = 0.66
@@ -260,6 +261,14 @@ class World:
 
     def is_wall_at(self, x: float, y: float) -> bool:
         return self.is_blocking_cell(int(x), int(y))
+
+    def collides_circle(self, x: float, y: float, r: float) -> bool:
+        # 4 угла "круга" (достаточно надёжно для grid-карт)
+        for ox in (-r, r):
+            for oy in (-r, r):
+                if self.is_blocking_cell(int(x + ox), int(y + oy)):
+                    return True
+        return False
 
     def apply_wrap(self, player: "Player") -> None:
         if not self.wrap_portals:
@@ -796,8 +805,8 @@ class Renderer:
             if not collected:
                 self._draw_billboard(zbuffer, player, pos, self.zachet_img, dim=False, scale=1.0)
 
-        if door_pos is not None:
-            self._draw_door_plane(zbuffer, player, door_pos, door_orientation, dim=not door_open)
+        if door_pos is not None and not door_open:
+            self._draw_door_plane(zbuffer, player, door_pos, door_orientation, dim=True)
 
 
         # upscale to screen
@@ -1015,7 +1024,7 @@ class Renderer:
                     mapY += stepY
                     side = 1
                 cell_type = world.cell_at(mapX, mapY)
-                if cell_type in ("1", "D"):
+                if cell_type == "1":
                     hit = True
                     break
             if not hit:
@@ -1054,7 +1063,7 @@ class Renderer:
             if visible_h <= 0:
                 continue
 
-            tex = self.door_tex if cell_type == "D" else self.wall_tex
+            tex = self.wall_tex
             col = tex.subsurface((texX, 0, 1, tex_h))
             col_scaled = pygame.transform.scale(col, (1, visible_h))
 
@@ -1557,14 +1566,62 @@ class PlayState(State):
         self.player.planex, self.player.planey = 0.0, C.FOV_PLANE
 
         self.monsters = []
-        for _ in range(self.monster_count):
+        
+        # dist-map от игрока: монстр обязан быть в достижимой области (с учётом закрытой двери)
+        px_cell, py_cell = int(self.player.x), int(self.player.y)
+        dist_map = compute_dist_map(self.world, px_cell, py_cell, self.world.is_blocking_cell)
+
+        candidates: List[Tuple[int, int, int]] = []  # (d, x, y)
+        for y, row in enumerate(dist_map):
+            for x, d in enumerate(row):
+                if d >= 0 and not self.world.is_blocking_cell(x, y):
+                    candidates.append((d, x, y))
+
+        if not candidates:
+            # fallback (почти не должно случаться)
+            candidates = [(0, int(self.player.x) + 1, int(self.player.y) + 1)]
+
+        dmax = max(d for d, _, _ in candidates)
+        min_d = max(6, int(dmax * 0.45))
+        min_d = min(min_d, dmax)
+
+        avoid = [self.spawn_point, self.door_pos] + self.zachetki
+        taken = set()
+
+        def far_ok(x: int, y: int) -> bool:
+            cx, cy = x + 0.5, y + 0.5
+            if (x, y) in taken:
+                return False
+            # не рядом со спавном/дверью/зачётками
+            return all(math.hypot(cx - ax, cy - ay) > 4.0 for ax, ay in avoid)
+
+        # сначала берём дальние, иначе — любые достижимые
+        far = [(d, x, y) for (d, x, y) in candidates if d >= min_d and far_ok(x, y)]
+        pool = far if far else [(d, x, y) for (d, x, y) in candidates if far_ok(x, y)]
+        if not pool:
+            pool = candidates
+
+        pool.sort(reverse=True)  # самые дальние впереди
+
+        for i in range(self.monster_count):
+            # небольшая случайность: выбираем из "верхушки" дальних
+            top = pool[:max(8, len(pool) // 10)]
+            d, x, y = random.choice(top)
+            taken.add((x, y))
+
             m = Monster()
-            m.x, m.y = app.find_empty_cell(self.world, (self.world.w - 3, self.world.h - 3))
-            m.active_time = pygame.time.get_ticks() / 1000.0 + C.MONSTER_SPAWN_DELAY
+            m.x, m.y = x + 0.5, y + 0.5
+            now = pygame.time.get_ticks() / 1000.0
+            m.active_time = now + C.MONSTER_SPAWN_DELAY + random.uniform(0.0, 0.4)
             m.next_replan = 0.0
             m.target = None
             m.tunnel_dist_cells = 999
             self.monsters.append(m)
+
+            # обновим pool, чтобы второй монстр не попал туда же
+            pool = [(dd, xx, yy) for (dd, xx, yy) in pool if (xx, yy) not in taken]
+            if not pool:
+                pool = candidates
 
         if reset_zachetka:
             self.zachet_collected = [False] * len(self.zachet_collected)
@@ -1680,11 +1737,17 @@ class PlayState(State):
             moveX += self.player.planex * speed * dt
             moveY += self.player.planey * speed * dt
 
+        r = C.PLAYER_RADIUS
+
         nx = self.player.x + moveX
         ny = self.player.y + moveY
-        if not self.world.is_blocking_cell(int(nx), int(self.player.y)):
+
+        # X отдельно (скольжение вдоль стен)
+        if not self.world.collides_circle(nx, self.player.y, r):
             self.player.x = nx
-        if not self.world.is_blocking_cell(int(self.player.x), int(ny)):
+
+        # Y отдельно
+        if not self.world.collides_circle(self.player.x, ny, r):
             self.player.y = ny
 
         self.world.apply_wrap(self.player)
