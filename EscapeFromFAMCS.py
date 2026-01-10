@@ -935,14 +935,15 @@ class Renderer:
         zbuffer = [1e9] * C.RENDER_W
         self._cast_walls(world, player, zbuffer)
 
-        if (not door_open) and (door_plane_pos is not None):
+        if door_plane_pos is not None:
             self._draw_door_plane(
                 zbuffer,
                 player,
                 door_plane_pos,
                 door_orientation,
-                dim=False,
+                dim=False,   # внешний вид не меняется
             )
+
 
         sprites = []
 
@@ -1058,6 +1059,20 @@ class Renderer:
 
         w, _ = self.screen.get_size()
         self.screen.blit(surf, (w - map_w - 12, 12))
+
+    @staticmethod
+    def _ru_plural(n: int, one: str, two: str, five: str) -> str:
+        n = abs(int(n))
+        n10 = n % 10
+        n100 = n % 100
+        if 11 <= n100 <= 14:
+            return five
+        if n10 == 1:
+            return one
+        if 2 <= n10 <= 4:
+            return two
+        return five
+
 
     @staticmethod
     def _text_with_outlines(
