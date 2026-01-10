@@ -2455,14 +2455,74 @@ class App:
 
     @staticmethod
     def find_empty_cell(world: World, prefer: Tuple[int, int]) -> Tuple[float, float]:
+        """
+        Выбирает спавн в "нормальной" части карты:
+        - берём связные компоненты проходимых клеток
+        - выбираем самую большую (или компоненту prefer, если она достаточно большая)
+        - внутри неё выбираем случайную клетку, предпочитая не-тупики
+        """
+        w, h = world.w, world.h
         px, py = prefer
-        if not world.is_blocking_cell(px, py):
-            return px + 0.5, py + 0.5
-        for y in range(1, world.h - 1):
-            for x in range(1, world.w - 1):
-                if not world.is_blocking_cell(x, y):
-                    return x + 0.5, y + 0.5
-        return 2.5, 2.5
+
+        def walkable(x: int, y: int) -> bool:
+            return (0 <= x < w and 0 <= y < h and not world.is_blocking_cell(x, y))
+
+        def bfs_component(sx: int, sy: int, visited: set) -> List[Tuple[int, int]]:
+            q = deque([(sx, sy)])
+            visited.add((sx, sy))
+            comp: List[Tuple[int, int]] = []
+            while q:
+                x, y = q.popleft()
+                comp.append((x, y))
+                for dx, dy in DIRS4:
+                    nx, ny = x + dx, y + dy
+                    if walkable(nx, ny) and (nx, ny) not in visited:
+                        visited.add((nx, ny))
+                        q.append((nx, ny))
+            return comp
+
+        # 1) Собрать все компоненты
+        visited: set = set()
+        comps: List[List[Tuple[int, int]]] = []
+        for y in range(1, h - 1):
+            for x in range(1, w - 1):
+                if walkable(x, y) and (x, y) not in visited:
+                    comps.append(bfs_component(x, y, visited))
+
+        if not comps:
+            return 2.5, 2.5
+
+        # 2) Выбрать "хорошую" компоненту
+        largest = max(comps, key=len)
+
+        prefer_comp = None
+        if walkable(px, py):
+            # найдём компоненту, где лежит prefer
+            for comp in comps:
+                # маленький трюк: множества не строим для всех, чтобы не жечь память
+                # (компоненты обычно небольшие, поэтому "in" по списку норм)
+                if (px, py) in comp:
+                    prefer_comp = comp
+                    break
+
+        # порог "не камерка": минимум 12% карты, но не меньше 80 клеток
+        min_ok = max(80, int(w * h * 0.12))
+
+        chosen = prefer_comp if (prefer_comp is not None and len(prefer_comp) >= min_ok) else largest
+
+        # 3) Внутри компоненты предпочтём клетки, которые не тупики
+        def open_neighbors(x: int, y: int) -> int:
+            c = 0
+            for dx, dy in DIRS4:
+                if walkable(x + dx, y + dy):
+                    c += 1
+            return c
+
+        good = [(x, y) for (x, y) in chosen if open_neighbors(x, y) >= 2]
+        pool = good if good else chosen
+
+        x, y = random.choice(pool)
+        return x + 0.5, y + 0.5
 
     def change_state(self, new_state: State) -> None:
         self.state.on_exit(self)
