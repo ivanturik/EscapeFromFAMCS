@@ -245,6 +245,9 @@ class PlayState(State):
         self.initialized = False
         self.monster_count = 1
 
+        # чтобы не триггерить финальный переход каждый кадр (возврат после мини-игр)
+        self._door_trigger_armed = True
+
         # мышь: аккумулируем rel
         self._mouse_dx = 0.0
         self._mouse_smooth = 0.0
@@ -320,6 +323,7 @@ class PlayState(State):
             self.zachet_collected = [False] * len(self.zachetki)
             self.lives = 3
             self.door_open = False
+            self._door_trigger_armed = True
             self._respawn(app, reset_zachetka=False)
             return
 
@@ -459,8 +463,13 @@ class PlayState(State):
         self.door_open = all(self.zachet_collected)
 
         if self.door_open:
-            if math.hypot(self.player.x - self.door_trigger[0], self.player.y - self.door_trigger[1]) < 0.85:
-                app.change_state(VictoryState())
+            dist = math.hypot(self.player.x - self.door_trigger[0], self.player.y - self.door_trigger[1])
+            if dist > 1.15:
+                self._door_trigger_armed = True
+            if dist < 0.85 and self._door_trigger_armed:
+                self._door_trigger_armed = False
+                # финальная победа доступна только после второй мини-игры
+                app.change_state(FnafMiniGameState(self))
 
     def lose_life(self, app: "App") -> None:
         self.lives -= 1
@@ -781,6 +790,269 @@ class DeathScreamerState(State):
 
     def draw(self, app: "App") -> None:
         app.renderer.draw_fullscreen_image(app.monster_img, "")
+
+
+class FnafMiniGameState(State):
+    """FNAF-style мини-игра "списать": прогресс/подозрение + переключение "препод смотрит"."""
+
+    def __init__(self, play_state: PlayState) -> None:
+        self.play_state = play_state
+
+        self.progress = 0.0
+        self.suspicion = 0.0
+        self.watching = True
+
+        self._flip_at = 0.0
+        self._next_lamp_at = 0.0
+
+
+        self._flash_left = 0.0
+        self._watch_vis = 1.0
+        self._cached_size: Tuple[int, int] = (0, 0)
+        self._paper_scaled: Optional[pygame.Surface] = None
+        self._phone_scaled: Optional[pygame.Surface] = None
+
+    def on_enter(self, app: "App") -> None:
+        pygame.event.set_grab(False)
+        pygame.mouse.set_visible(True)
+
+        app.audio.stop_drone()
+        app.audio.stop_menu_music()
+        app.audio.stop_fnaf_noise()
+        app.audio.start_fnaf_noise()
+
+        now = pygame.time.get_ticks() / 1000.0
+        self.progress = 0.0
+        self.suspicion = 0.0
+        self.watching = True
+        self._flip_at = now + random.uniform(0.9, 1.8)
+        self._next_lamp_at = now + random.uniform(4.0, 12.0)
+
+
+        self._flash_left = 0.0
+        self._watch_vis = 1.0
+        self._cached_size = (0, 0)
+        self._paper_scaled = None
+        self._phone_scaled = None
+
+        # небольшой "ламповый" щелчок при старте, чтобы задать ритм
+        app.audio.play_fnaf_lamp()
+
+    def on_exit(self, app: "App") -> None:
+        app.audio.stop_fnaf_noise()
+
+    def handle_event(self, app: "App", event: pygame.event.Event) -> None:
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+            # тестовый выход без победы
+            app.audio.stop_fnaf_noise()
+            app.change_state(self.play_state)
+
+    def update(self, app: "App", dt: float, t: float) -> None:
+        # смена состояния "препод смотрит/отвернулся"
+        if t >= self._flip_at:
+            self.watching = not self.watching
+            if self.watching:
+                self._flip_at = t + random.uniform(0.9, 1.8)
+                self._flash_left = 0.12
+                app.audio.play_fnaf_lamp()
+            else:
+                self._flip_at = t + random.uniform(1.4, 3.2)
+
+        # редкий "ламповый" звук поверх
+        if t >= self._next_lamp_at:
+            app.audio.play_fnaf_lamp()
+            self._next_lamp_at = t + random.uniform(4.0, 12.0)
+
+        # плавная анимация появления "препода" + короткая вспышка при повороте
+        target = 1.0 if self.watching else 0.0
+        self._watch_vis += (target - self._watch_vis) * min(1.0, dt * 7.0)
+        if self._flash_left > 0.0:
+            self._flash_left = max(0.0, self._flash_left - dt)
+
+        keys = pygame.key.get_pressed()
+        writing = bool(keys[pygame.K_SPACE])
+
+        if writing and (not self.watching):
+            self.progress = clamp(self.progress + dt * 0.28, 0.0, 1.0)
+        elif writing and self.watching:
+            self.suspicion = clamp(self.suspicion + dt * 1.55, 0.0, 1.2)
+        else:
+            self.suspicion = clamp(self.suspicion - dt * 0.22, 0.0, 1.0)
+
+        if self.suspicion >= 1.0:
+            self.play_state.lives -= 1
+            app.change_state(FnafScreamerState(self.play_state))
+            return
+
+        if self.progress >= 1.0:
+            app.change_state(VictoryState())
+            return
+
+    def _ensure_scaled_ui(self, app: "App") -> None:
+        w, h = app.screen.get_size()
+        if (w, h) == self._cached_size:
+            return
+        self._cached_size = (w, h)
+
+        # paper (центр) ~52% ширины (чтобы HUD/текст читался)
+        src_paper = app.fnaf_paper_img
+        target_pw = max(64, int(w * 0.52))
+        paper_ratio = src_paper.get_height() / max(1, src_paper.get_width())
+        target_ph = max(64, int(target_pw * paper_ratio))
+        # ограничение по высоте: лист не должен перекрывать верхний HUD
+        max_ph = int(h * 0.72)
+        if target_ph > max_ph:
+            target_ph = max_ph
+            target_pw = max(64, int(target_ph / max(1e-6, paper_ratio)))
+        self._paper_scaled = pygame.transform.smoothscale(src_paper, (target_pw, target_ph))
+
+        # phone (правый низ) ~20% ширины
+        src_phone = app.fnaf_phone_img
+        target_fw = max(48, int(w * 0.20))
+        phone_ratio = src_phone.get_height() / max(1, src_phone.get_width())
+        target_fh = max(48, int(target_fw * phone_ratio))
+        self._phone_scaled = pygame.transform.smoothscale(src_phone, (target_fw, target_fh))
+
+    def draw(self, app: "App") -> None:
+        screen = app.screen
+        w, h = screen.get_size()
+
+        # лёгкая тряска, если подозрение растёт (накал)
+        panic = clamp((self.suspicion - 0.55) / 0.45, 0.0, 1.0)
+        shake = int(6 * panic)
+        ox = random.randint(-shake, shake) if shake > 0 else 0
+        oy = random.randint(-shake, shake) if shake > 0 else 0
+
+        screen.fill((8, 8, 10))
+
+        # зерно/шум
+        for _ in range(random.randint(150, 300)):
+            x = random.randrange(w)
+            y = random.randrange(h)
+            c = random.randint(10, 38)
+            screen.set_at((x, y), (c, c, c))
+
+        self._ensure_scaled_ui(app)
+        if self._paper_scaled is not None:
+            r = self._paper_scaled.get_rect(center=(w // 2 + ox, h // 2 + oy + 24))
+            screen.blit(self._paper_scaled, r)
+        if self._phone_scaled is not None:
+            r = self._phone_scaled.get_rect(bottomright=(w - 18 + ox, h - 18 + oy))
+            screen.blit(self._phone_scaled, r)
+
+        # верхний HUD (подложка, чтобы текст не терялся на фоне листа)
+        hud_h = 118
+        hud = pygame.Surface((w, hud_h), pygame.SRCALPHA)
+        # чем выше подозрение/если смотрит — тем темнее верх
+        base_a = 160 + int(50 * panic)
+        hud.fill((0, 0, 0, min(220, base_a)))
+        screen.blit(hud, (0, 0))
+
+        # "препод" как тёмная тень сверху + глаза/блик, когда смотрит
+        # (без новых ассетов — простая геометрия)
+        vis = clamp(self._watch_vis, 0.0, 1.0)
+        head_y = int(-40 + 70 * vis)
+        cx = w // 2 + ox
+        # голова
+        pygame.draw.ellipse(screen, (4, 4, 6), (cx - 96, head_y, 192, 128))
+        # плечи
+        pygame.draw.rect(screen, (2, 2, 4), (cx - 220, head_y + 70, 440, 110), border_radius=28)
+
+        if self.watching:
+            # пульсирующий взгляд
+            pulse = 0.55 + 0.45 * math.sin(pygame.time.get_ticks() / 1000.0 * 4.2)
+            ex = 34
+            ey = head_y + 56
+            # глаза
+            pygame.draw.circle(screen, (240, 240, 240), (cx - ex, ey), 8)
+            pygame.draw.circle(screen, (240, 240, 240), (cx + ex, ey), 8)
+            # красное свечение
+            glow = pygame.Surface((w, hud_h), pygame.SRCALPHA)
+            glow.fill((140, 0, 0, int(55 * pulse)))
+            screen.blit(glow, (0, 0))
+
+        # короткая вспышка при повороте "смотрит"
+        if self._flash_left > 0.0:
+            k = clamp(self._flash_left / 0.12, 0.0, 1.0)
+            flash = pygame.Surface((w, h), pygame.SRCALPHA)
+            flash.fill((255, 255, 255, int(90 * k)))
+            screen.blit(flash, (0, 0))
+
+        # текст
+        title = app.renderer.big_font.render("СПИСАТЬ", True, (245, 245, 245))
+        tr = title.get_rect(midtop=(w // 2, 14))
+        # обводка
+        outline = app.renderer.big_font.render("СПИСАТЬ", True, (0, 0, 0))
+        for dx, dy in ((-2, 0), (2, 0), (0, -2), (0, 2)):
+            screen.blit(outline, tr.move(dx, dy))
+        screen.blit(title, tr)
+
+        if self.watching:
+            msg = "ПРЕПОД СМОТРИТ! НЕ ЖМИ SPACE"
+            col = (220, 60, 60)
+        else:
+            msg = "СЕЙЧАС! ДЕРЖИ SPACE"
+            col = (70, 210, 90)
+
+        hint = app.renderer.font.render(msg, True, col)
+        hr = hint.get_rect(midtop=(w // 2, 68))
+        # фон-плашка
+        pad = 10
+        bg = pygame.Surface((hr.w + pad * 2, hr.h + pad * 2), pygame.SRCALPHA)
+        bg.fill((0, 0, 0, 150))
+        screen.blit(bg, (hr.x - pad, hr.y - pad))
+        # обводка
+        hint_o = app.renderer.font.render(msg, True, (0, 0, 0))
+        for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            screen.blit(hint_o, hr.move(dx, dy))
+        screen.blit(hint, hr)
+
+        hp_txt = app.renderer.font.render(f"HP: {max(0, self.play_state.lives)}", True, (240, 240, 240))
+        screen.blit(hp_txt, (18, 86))
+
+        # полоски
+        bar_w = int(w * 0.56)
+        bar_h = 18
+        x0 = 18
+        y_prog = h - 84
+        y_susp = h - 52
+
+        def draw_bar(x: int, y: int, frac: float, label: str, fill_col: Tuple[int, int, int]) -> None:
+            frac = clamp(frac, 0.0, 1.0)
+            pygame.draw.rect(screen, (245, 245, 245), (x, y, bar_w, bar_h), 2)
+            pygame.draw.rect(screen, fill_col, (x + 2, y + 2, int((bar_w - 4) * frac), bar_h - 4))
+            txt = app.renderer.font.render(label, True, (235, 235, 235))
+            screen.blit(txt, (x, y - 22))
+
+        draw_bar(x0, y_prog, self.progress, "Progress", (80, 200, 110))
+        draw_bar(x0, y_susp, self.suspicion, "Suspicion", (220, 70, 70))
+
+
+class FnafScreamerState(State):
+    def __init__(self, play_state: PlayState, duration: float = 1.0) -> None:
+        self.play_state = play_state
+        self.duration = duration
+        self.start_time = 0.0
+
+    def on_enter(self, app: "App") -> None:
+        pygame.event.set_grab(False)
+        pygame.mouse.set_visible(True)
+        self.start_time = pygame.time.get_ticks() / 1000.0
+        app.audio.stop_drone()
+        app.audio.stop_menu_music()
+        app.audio.stop_fnaf_noise()
+        app.audio.play_scream()
+
+    def update(self, app: "App", dt: float, t: float) -> None:
+        if (t - self.start_time) >= self.duration:
+            app.audio.stop_scream()
+            if self.play_state.lives <= 0:
+                app.change_state(GameOverState())
+            else:
+                app.change_state(FnafMiniGameState(self.play_state))
+
+    def draw(self, app: "App") -> None:
+        app.renderer.draw_fullscreen_image(app.fnaf_img, "")
 
 
 class VictoryState(State):

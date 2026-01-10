@@ -31,6 +31,13 @@ class Const:
     UI_HOVER_FILE: str = "audio/ui_hover.wav"
     SEAL_PICKUP_FILE: str = "audio/seal_pickup.wav"
 
+    # FNAF mini-game
+    FNAF_IMG: str = "img/FNAF.jpg"
+    FNAF_PHONE_IMG: str = "img/fnaf_phone.png"
+    FNAF_PAPER_IMG: str = "img/fnaf_paper.png"
+    FNAF_NOISE_FILE: str = "audio/noise.wav"
+    FNAF_LAMP_FILE: str = "audio/lamp.wav"
+
     # Gameplay
     MOVE_SPEED: float = 2.6
     RUN_MULT: float = 1.75

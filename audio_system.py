@@ -38,6 +38,12 @@ class AudioSystem:
         self.victory_sound: Optional[pygame.mixer.Sound] = None
         self.end_sound: Optional[pygame.mixer.Sound] = None
 
+        # FNAF mini-game
+        self.fnaf_noise_sound: Optional[pygame.mixer.Sound] = None
+        self.fnaf_lamp_sound: Optional[pygame.mixer.Sound] = None
+        self.fnaf_noise_channel: Optional[pygame.mixer.Channel] = None
+        self.fnaf_fx_channel: Optional[pygame.mixer.Channel] = None
+
     @staticmethod
     def _load_sound(path: str) -> Optional[pygame.mixer.Sound]:
         if not os.path.exists(path):
@@ -51,6 +57,7 @@ class AudioSystem:
         try:
             pygame.mixer.pre_init(44100, -16, 2, 512)
             pygame.mixer.init()
+            pygame.mixer.set_num_channels(8)
         except Exception:
             self.enabled = False
             return
@@ -58,6 +65,8 @@ class AudioSystem:
         self.drone_channel = pygame.mixer.Channel(0)
         self.scream_channel = pygame.mixer.Channel(1)
         self.ambient_channel = pygame.mixer.Channel(2)
+        self.fnaf_noise_channel = pygame.mixer.Channel(3)
+        self.fnaf_fx_channel = pygame.mixer.Channel(4)
 
         self.drone = self._make_drone()
         self.ambient_sound = self._load_sound(resource_path(C.AMBIENT_FILE))
@@ -69,6 +78,9 @@ class AudioSystem:
         self.pickup_sound = self._load_sound(resource_path(C.SEAL_PICKUP_FILE))
         self.victory_sound = self._load_sound(resource_path(C.VICTORY_FILE))
         self.end_sound = self._load_sound(resource_path(C.END_FILE))
+
+        self.fnaf_noise_sound = self._load_sound(resource_path(C.FNAF_NOISE_FILE))
+        self.fnaf_lamp_sound = self._load_sound(resource_path(C.FNAF_LAMP_FILE))
 
         self._load_scream()
 
@@ -89,6 +101,12 @@ class AudioSystem:
 
         if self.scream_channel is not None:
             self.scream_channel.set_volume(self.sfx_volume)
+
+        if self.fnaf_noise_channel is not None and self.fnaf_noise_channel.get_busy():
+            self.fnaf_noise_channel.set_volume(0.35 * self.sfx_volume)
+
+        if self.fnaf_fx_channel is not None:
+            self.fnaf_fx_channel.set_volume(self.sfx_volume)
 
         for snd in (self.ui_hover_sound, self.ui_click_sound, self.pickup_sound, self.victory_sound, self.end_sound):
             if snd is not None:
@@ -120,6 +138,41 @@ class AudioSystem:
 
     def play_end(self) -> None:
         self._play_sfx(self.end_sound)
+
+    # ---------- FNAF mini-game ----------
+    def start_fnaf_noise(self) -> None:
+        if not self.enabled:
+            return
+        if self.fnaf_noise_sound is None or self.fnaf_noise_channel is None:
+            return
+        try:
+            self.fnaf_noise_sound.set_volume(0.35 * self.sfx_volume)
+            if not self.fnaf_noise_channel.get_busy():
+                self.fnaf_noise_channel.play(self.fnaf_noise_sound, loops=-1)
+            self.fnaf_noise_channel.set_volume(0.35 * self.sfx_volume)
+        except Exception:
+            pass
+
+    def stop_fnaf_noise(self) -> None:
+        if self.fnaf_noise_channel is not None:
+            try:
+                self.fnaf_noise_channel.stop()
+            except Exception:
+                pass
+
+    def play_fnaf_lamp(self) -> None:
+        if not self.enabled:
+            return
+        if self.fnaf_lamp_sound is None:
+            return
+        try:
+            self.fnaf_lamp_sound.set_volume(0.90 * self.sfx_volume)
+            if self.fnaf_fx_channel is not None:
+                self.fnaf_fx_channel.play(self.fnaf_lamp_sound)
+            else:
+                self.fnaf_lamp_sound.play()
+        except Exception:
+            pass
 
     # ---------- Menu music ----------
     def play_menu_music(self) -> None:

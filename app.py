@@ -37,6 +37,11 @@ class App:
         self.victory_img = self._load_image_safe(C.VICTORY_IMG, alpha=False)
         self.end_img = self._load_image_safe(C.END_IMG, alpha=False)
 
+        # FNAF mini-game assets
+        self.fnaf_img = self._load_image_safe(C.FNAF_IMG, alpha=False)
+        self.fnaf_phone_img = self._load_image_safe(C.FNAF_PHONE_IMG, alpha=True)
+        self.fnaf_paper_img = self._load_image_safe(C.FNAF_PAPER_IMG, alpha=True)
+
         # Audio
         self.audio = AudioSystem()
         self.audio.init()
